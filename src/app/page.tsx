@@ -13,6 +13,7 @@ import { LobbyScreen } from '@/components/game/LobbyScreen'
 import { SoundToggle } from '@/components/game/SoundToggle'
 import { AnimalAvatar, TankFace, SpeedsterFace, MageFace, JesterFace, Sparkle } from '@/components/game/assets'
 import { ConfettiBurst } from '@/components/game/Effects'
+import { copyToClipboard } from '@/lib/clipboard'
 import { toast } from 'sonner'
 
 type ScreenName = 'home' | 'lobby' | 'game' | 'ended'
@@ -78,15 +79,30 @@ export default function Home() {
 
   if (screen === 'lobby' && state) return <LobbyScreen />
   if (screen === 'game' && state) {
+    const handleCopy = async () => {
+      const ok = await copyToClipboard(state.roomCode)
+      if (ok) toast.success('Room code copied!')
+      else toast.error('Copy failed')
+    }
     return (
       <div className="min-h-screen flex flex-col">
-        <header className="px-3 pt-3 pb-1">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <h1 className="text-xl font-bold text-jumbo-pink" style={{ textShadow: '0 2px 0 #c43678' }}>JUMBO ROYALE</h1>
-              <p className="text-xs text-muted-foreground">Room {state.roomCode} · {state.mode === 'pvp' ? '⚔️ PvP' : '🤝 Co-op'}</p>
+        <header className="px-3 pt-3 pb-2 flex-shrink-0">
+          <div className="flex items-center justify-between gap-2 max-w-7xl mx-auto w-full">
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold text-jumbo-pink leading-none" style={{ textShadow: '0 2px 0 #c43678' }}>JUMBO ROYALE</h1>
+              <button
+                onClick={handleCopy}
+                className="text-xs text-muted-foreground hover:text-jumbo-pink transition-colors flex items-center gap-1 mt-1"
+                title="Click to copy room code"
+              >
+                <span>Room</span>
+                <span className="font-mono font-bold text-jumbo-purple">{state.roomCode}</span>
+                <span>·</span>
+                <span>{state.mode === 'pvp' ? '⚔️ PvP' : '🤝 Co-op'}</span>
+                <span className="opacity-50 text-[10px]">(tap to copy)</span>
+              </button>
             </div>
-            <div className="flex gap-1">
+            <div className="flex gap-1 flex-shrink-0">
               <SoundToggle />
               <Button variant="outline" size="sm" onClick={() => { window.location.reload() }}>
                 🏠 Leave
@@ -94,9 +110,16 @@ export default function Home() {
             </div>
           </div>
         </header>
-        <main className="flex-1 px-3 pb-4 max-w-2xl w-full mx-auto flex flex-col gap-2">
-          <GameHUD onAbilityModeChange={setAbilityMode} />
-          <GameBoard abilityMode={abilityMode} />
+        {/* Responsive layout: stacked on mobile, side-by-side on desktop */}
+        <main className="flex-1 px-3 pb-4 max-w-7xl mx-auto w-full flex flex-col lg:flex-row lg:gap-4 gap-2">
+          {/* Left/main column: HUD (mobile) or board (desktop) */}
+          <div className="flex flex-col gap-2 lg:flex-1 lg:max-w-2xl lg:mx-auto lg:order-2 lg:self-start lg:sticky lg:top-3">
+            <GameBoard abilityMode={abilityMode} />
+          </div>
+          {/* Right column: HUD panels (desktop) or above board (mobile) */}
+          <div className="flex flex-col gap-2 lg:w-[340px] lg:flex-shrink-0 lg:order-1">
+            <GameHUD onAbilityModeChange={setAbilityMode} />
+          </div>
         </main>
       </div>
     )

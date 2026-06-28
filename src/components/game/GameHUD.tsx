@@ -1,12 +1,12 @@
 'use client'
 import { useJumbo } from '@/stores/jumbo'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import { canUseAbility, getAbilityTargets } from '@/game/engine'
 import { PieceVisual } from './PieceVisual'
 import { AnimalAvatar, Sparkle } from './assets'
+import { Tooltip } from './Tooltip'
 import { Piece, ChaosEvent } from '@/game/types'
 
 const EMOJI_WHEEL = ['😂', '🔥', '💀', '🎉', '👏', '😭', '🤔', '👀', '❤️', '🤯', '🥳', '😤']
@@ -20,8 +20,7 @@ const CHAOS_INFO: Record<ChaosEvent, { label: string; desc: string; emoji: strin
 }
 
 function formatTime(ms: number) {
-  const s = Math.max(0, Math.ceil(ms / 1000))
-  return `${s}`
+  return `${Math.max(0, Math.ceil(ms / 1000))}`
 }
 
 export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: { pieceId: string; targets: { row: number; col: number }[] } | null) => void }) {
@@ -29,15 +28,27 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
   const [emoteOpen, setEmoteOpen] = useState(false)
   const [now, setNow] = useState(Date.now())
   const [abilityMode, setAbilityMode] = useState<{ pieceId: string; targets: { row: number; col: number }[] } | null>(null)
+  const prevTurnKeyRef = useRef<string>('')
+  const [turnPulse, setTurnPulse] = useState(0)
 
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 500)
+    const t = setInterval(() => setNow(Date.now()), 250)
     return () => clearInterval(t)
   }, [])
 
   useEffect(() => {
     onAbilityModeChange(abilityMode)
   }, [abilityMode, onAbilityModeChange])
+
+  // Detect turn change to trigger a pulse animation
+  useEffect(() => {
+    if (!state) return
+    const key = `${state.currentTurnTeam}-${state.currentPlayerIndex}`
+    if (key !== prevTurnKeyRef.current) {
+      prevTurnKeyRef.current = key
+      setTurnPulse(p => p + 1)
+    }
+  }, [state?.currentTurnTeam, state?.currentPlayerIndex])
 
   if (!state) return null
 
@@ -52,26 +63,21 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
     setAbilityMode({ pieceId: selectedPiece.id, targets: abilityTargets })
   }
 
-  const handleCancelAbility = () => {
-    setAbilityMode(null)
-  }
+  const handleCancelAbility = () => setAbilityMode(null)
 
   const redPlayers = state.players.filter(p => p.team === 'red' && p.connected)
   const bluePlayers = state.players.filter(p => p.team === 'blue' && p.connected)
-
   const turnMsLeft = state.turnStartedAt + state.turnDurationSec * 1000 - now
   const turnPct = Math.max(0, Math.min(100, (turnMsLeft / (state.turnDurationSec * 1000)) * 100))
-
   const currentSlot = state.players[state.currentPlayerIndex]
   const chaos = pendingChaos ? CHAOS_INFO[pendingChaos] : null
+  const isLowTime = turnMsLeft < 5000 && turnMsLeft > 0
 
   return (
     <div className="flex flex-col gap-2">
-      {/* ===== Turn banner ===== */}
+      {/* ===== Turn banner — stable, no layout shift ===== */}
       <motion.div
-        key={state.currentTurnTeam + state.currentPlayerIndex}
-        initial={{ scale: 0.9, opacity: 0.7 }}
-        animate={{ scale: 1, opacity: 1 }}
+        layout
         className="relative rounded-2xl overflow-hidden"
         style={{
           background: state.currentTurnTeam === 'red'
@@ -79,57 +85,76 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
             : state.currentTurnTeam === 'blue'
             ? 'linear-gradient(135deg, #4f7bff, #2848a8)'
             : 'linear-gradient(135deg, #9b59b6, #4a2670)',
-          boxShadow: '0 6px 0 rgba(26,13,46,0.4), 0 8px 20px rgba(0,0,0,0.25)',
+          boxShadow: '0 4px 0 rgba(26,13,46,0.4), 0 6px 16px rgba(0,0,0,0.2)',
           border: '3px solid #1a0d2e',
         }}
       >
         <div className="absolute inset-0 opacity-20" style={{ background: 'radial-gradient(circle at 20% 50%, rgba(255,255,255,0.4), transparent 60%)' }} />
+        {/* Pulse on turn change */}
+        <motion.div
+          key={turnPulse}
+          initial={{ opacity: 0.5 }}
+          animate={{ opacity: 0 }}
+          transition={{ duration: 0.6 }}
+          className="absolute inset-0 bg-white pointer-events-none"
+        />
         <div className="relative px-3 py-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            {currentSlot?.avatar && <AnimalAvatar kind={currentSlot.avatar} size={32} />}
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={currentSlot?.id ?? state.currentTurnTeam}
+                initial={{ scale: 0, rotate: -30 }}
+                animate={{ scale: 1, rotate: 0 }}
+                exit={{ scale: 0, rotate: 30 }}
+                transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+              >
+                {currentSlot?.avatar
+                  ? <AnimalAvatar kind={currentSlot.avatar} size={36} />
+                  : <div className="w-9 h-9 rounded-full bg-white/30 flex items-center justify-center text-xl">👑</div>
+                }
+              </motion.div>
+            </AnimatePresence>
             <div className="min-w-0">
-              <div className="text-xs font-bold text-white/80 uppercase tracking-wide">
+              <div className="text-[10px] font-bold text-white/80 uppercase tracking-wide leading-none">
                 {state.currentTurnTeam === 'boss' ? 'Boss Turn' : 'Turn'}
               </div>
-              <div className="font-bold text-white truncate">
-                {currentSlot?.isBot ? '🤖 ' : ''}{currentSlot?.name ?? '—'}
+              <div className="font-bold text-white truncate text-sm leading-tight">
+                {currentSlot?.isBot && '🤖 '}{currentSlot?.name ?? '—'}
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <AnimatePresence>
               {isMyTurn && (
                 <motion.div
                   initial={{ scale: 0, rotate: -10 }}
                   animate={{ scale: 1, rotate: 0 }}
                   exit={{ scale: 0 }}
-                  className="px-3 py-1.5 rounded-xl font-bold text-sm"
+                  className="px-2.5 py-1 rounded-lg font-bold text-xs"
                   style={{
                     background: 'linear-gradient(135deg, #2ecc71, #1a9850)',
                     border: '2px solid #1a0d2e',
-                    boxShadow: '0 3px 0 #0d4f2e',
+                    boxShadow: '0 2px 0 #0d4f2e',
                   }}
                 >
                   YOUR TURN!
                 </motion.div>
               )}
             </AnimatePresence>
-            {/* Timer */}
-            <div className="flex flex-col items-center">
+            <div className="flex flex-col items-center min-w-[48px]">
               <div
-                className={`font-mono font-bold text-2xl ${turnMsLeft < 5000 ? 'text-jumbo-yellow' : 'text-white'}`}
+                className={`font-mono font-bold text-xl leading-none ${isLowTime ? 'text-jumbo-yellow' : 'text-white'}`}
                 style={{ textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}
               >
-                {turnMsLeft < 5000 && turnMsLeft > 0 ? (
-                  <motion.span animate={{ scale: [1, 1.2, 1] }} transition={{ duration: 0.5, repeat: Infinity }}>{formatTime(turnMsLeft)}</motion.span>
-                ) : (
-                  formatTime(turnMsLeft)
-                )}
+                {isLowTime ? (
+                  <motion.span animate={{ scale: [1, 1.15, 1] }} transition={{ duration: 0.5, repeat: Infinity }}>{formatTime(turnMsLeft)}</motion.span>
+                ) : formatTime(turnMsLeft)}
               </div>
-              <div className="w-20 h-1 rounded-full bg-black/30 overflow-hidden">
-                <div
-                  className={`h-full transition-all ${turnMsLeft < 5000 ? 'bg-jumbo-red' : 'bg-jumbo-yellow'}`}
-                  style={{ width: `${turnPct}%` }}
+              <div className="w-12 h-1 rounded-full bg-black/30 overflow-hidden mt-0.5">
+                <motion.div
+                  className={`h-full ${isLowTime ? 'bg-jumbo-red' : 'bg-jumbo-yellow'}`}
+                  animate={{ width: `${turnPct}%` }}
+                  transition={{ duration: 0.25 }}
                 />
               </div>
             </div>
@@ -137,54 +162,67 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
         </div>
       </motion.div>
 
-      {/* ===== Boss HP bar (co-op) ===== */}
-      {state.mode === 'coop' && state.boss && (
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="rounded-2xl p-3 relative overflow-hidden"
-          style={{
-            background: 'linear-gradient(135deg, #2a1450, #1a0d2e)',
-            border: '3px solid #6b3aa0',
-            boxShadow: '0 4px 0 #0a0418',
-          }}
-        >
-          <div className="flex items-center justify-between mb-1">
-            <div className="flex items-center gap-2">
-              <motion.div
-                animate={state.boss.rage ? { rotate: [0, -3, 3, 0] } : {}}
-                transition={{ duration: 0.3, repeat: Infinity }}
-                className="text-2xl"
+      {/* ===== Boss HP bar — stable container ===== */}
+      <div className="min-h-0">
+        <AnimatePresence>
+          {state.mode === 'coop' && state.boss && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div
+                className="rounded-2xl p-3 relative overflow-hidden"
+                style={{
+                  background: 'linear-gradient(135deg, #2a1450, #1a0d2e)',
+                  border: '3px solid #6b3aa0',
+                  boxShadow: '0 3px 0 #0a0418',
+                }}
               >
-                {state.boss.rage ? '😡' : '👑'}
-              </motion.div>
-              <div>
-                <div className="font-bold text-white text-sm">BOSS KING</div>
-                <div className="text-xs text-purple-300">
-                  {state.boss.rage ? '⚠️ RAGING — summoning minions!' : 'Calm'}
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <motion.div
+                      animate={state.boss.rage ? { rotate: [0, -3, 3, 0] } : {}}
+                      transition={{ duration: 0.3, repeat: Infinity }}
+                      className="text-2xl"
+                    >
+                      {state.boss.rage ? '😡' : '👑'}
+                    </motion.div>
+                    <div>
+                      <div className="font-bold text-white text-sm">BOSS KING</div>
+                      <div className="text-xs text-purple-300">
+                        {state.boss.rage ? '⚠️ RAGING — summoning minions!' : 'Calm'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="font-mono font-bold text-white text-sm">
+                    {state.boss.hp}/{state.boss.maxHp}
+                  </div>
+                </div>
+                <div className="h-4 rounded-full overflow-hidden relative" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid #1a0d2e' }}>
+                  <motion.div
+                    className={`h-full ${state.boss.rage ? 'bg-gradient-to-r from-red-600 to-red-400' : 'bg-gradient-to-r from-purple-600 to-purple-400'}`}
+                    animate={{
+                      width: `${(state.boss.hp / state.boss.maxHp) * 100}%`,
+                      opacity: state.boss.rage ? [0.7, 1, 0.7] : 1,
+                    }}
+                    transition={{
+                      width: { type: 'spring', stiffness: 200, damping: 30 },
+                      opacity: { duration: 0.6, repeat: state.boss.rage ? Infinity : 0 },
+                    }}
+                  />
+                  <div className="absolute inset-0 flex pointer-events-none">
+                    {Array.from({ length: state.boss.maxHp }).map((_, i) => (
+                      <div key={i} className="flex-1 border-r border-black/30 last:border-r-0" />
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="font-mono font-bold text-white text-sm">
-              {state.boss.hp}/{state.boss.maxHp}
-            </div>
-          </div>
-          <div className="h-4 rounded-full overflow-hidden relative" style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid #1a0d2e' }}>
-            <motion.div
-              className={`h-full ${state.boss.rage ? 'bg-gradient-to-r from-red-600 to-red-400' : 'bg-gradient-to-r from-purple-600 to-purple-400'}`}
-              animate={state.boss.rage ? { opacity: [0.7, 1, 0.7] } : {}}
-              transition={{ duration: 0.6, repeat: Infinity }}
-              style={{ width: `${(state.boss.hp / state.boss.maxHp) * 100}%` }}
-            />
-            {/* HP segment markers */}
-            <div className="absolute inset-0 flex">
-              {Array.from({ length: state.boss.maxHp }).map((_, i) => (
-                <div key={i} className="flex-1 border-r border-black/30 last:border-r-0" />
-              ))}
-            </div>
-          </div>
-        </motion.div>
-      )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
       {/* ===== Player scoreboards ===== */}
       <div className="grid grid-cols-2 gap-2">
@@ -207,69 +245,118 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
         )}
       </div>
 
-      {/* ===== Selected piece panel ===== */}
-      <AnimatePresence>
-        {selectedPiece && (
-          <motion.div
-            initial={{ opacity: 0, y: 10, height: 0 }}
-            animate={{ opacity: 1, y: 0, height: 'auto' }}
-            exit={{ opacity: 0, y: 10, height: 0 }}
-          >
-            <div
-              className="rounded-2xl p-3 flex items-center gap-3"
-              style={{
-                background: 'linear-gradient(135deg, #fff8ef, #ffe1ef)',
-                border: '3px solid #ffd23f',
-                boxShadow: '0 4px 0 #c4a83f',
-              }}
+      {/* ===== Selected piece panel — stable height container ===== */}
+      <div className="min-h-0">
+        <AnimatePresence mode="wait">
+          {selectedPiece && (
+            <motion.div
+              key={selectedPiece.id + (selectedPiece.hp) + (selectedPiece.isKing ? 'k' : '') + (selectedPiece.hasShield ? 's' : '')}
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
             >
-              <div className="flex-shrink-0">
-                <PieceVisual piece={selectedPiece} size={56} selected />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="font-bold text-sm text-jumbo-purple">{selectedPiece.ownerName}'s piece</div>
-                <div className="text-xs text-muted-foreground flex flex-wrap gap-2 mt-0.5">
-                  <span className="font-semibold">{selectedPiece.character.toUpperCase()}</span>
-                  <span>·</span>
-                  <span>{selectedPiece.isKing ? 'King 👑' : 'Pawn'}</span>
-                  <span>·</span>
-                  <span>HP {selectedPiece.hp}</span>
-                  {selectedPiece.frozenTurns > 0 && <span className="text-blue-500">❄️ {selectedPiece.frozenTurns}T</span>}
-                  {selectedPiece.hasShield && <span className="text-cyan-500">🛡️ Shielded</span>}
+              <div
+                className="rounded-2xl p-3 flex items-center gap-3"
+                style={{
+                  background: 'linear-gradient(135deg, #fff8ef, #ffe1ef)',
+                  border: '3px solid #ffd23f',
+                  boxShadow: '0 3px 0 #c4a83f',
+                }}
+              >
+                <div className="flex-shrink-0">
+                  <PieceVisual piece={selectedPiece} size={52} selected />
                 </div>
-                {legalMoves.length > 0 && (
-                  <div className="text-xs text-jumbo-green font-bold mt-1 flex items-center gap-1">
-                    <Sparkle size={12} />
-                    {legalMoves.length} move{legalMoves.length > 1 ? 's' : ''} — tap green tile
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-sm text-jumbo-purple">{selectedPiece.ownerName}'s piece</div>
+                  <div className="text-xs text-muted-foreground flex flex-wrap gap-1.5 mt-0.5">
+                    <span className="font-semibold">{selectedPiece.character.toUpperCase()}</span>
+                    <span className="opacity-50">·</span>
+                    <span>{selectedPiece.isKing ? 'King 👑' : 'Pawn'}</span>
+                    <span className="opacity-50">·</span>
+                    <span>HP {selectedPiece.hp}</span>
+                    {selectedPiece.frozenTurns > 0 && <span className="text-blue-500">❄️ {selectedPiece.frozenTurns}T</span>}
+                    {selectedPiece.hasShield && <span className="text-cyan-500">🛡️ Shield</span>}
                   </div>
-                )}
-                {legalMoves.length === 0 && isMyTurn && selectedPiece.team === mySlot?.team && (
-                  <div className="text-xs text-jumbo-red font-bold mt-1">No moves — try another piece</div>
-                )}
+                  <div className="mt-1">
+                    {legalMoves.length > 0 ? (
+                      <div className="text-xs text-jumbo-green font-bold flex items-center gap-1">
+                        <Sparkle size={12} />
+                        {legalMoves.length} move{legalMoves.length > 1 ? 's' : ''} — tap green tile
+                      </div>
+                    ) : isMyTurn && selectedPiece.team === mySlot?.team ? (
+                      <div className="text-xs text-jumbo-red font-bold">No moves — try another piece</div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">Tap to inspect</div>
+                    )}
+                  </div>
+                </div>
+                <AnimatePresence>
+                  {canUseSelectedAbility && abilityTargets.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                    >
+                      <Tooltip content={`${selectedPiece.character === 'mage' ? 'Teleport to any empty tile (within 3 squares)' : 'Swap places with any piece on the board'}`} side="left">
+                        <Button
+                          size="sm"
+                          onClick={handleAbilityClick}
+                          className="bg-jumbo-yellow text-jumbo-bg font-bold hover:brightness-110"
+                        >
+                          ⚡ Ability
+                        </Button>
+                      </Tooltip>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
-              {canUseSelectedAbility && abilityTargets.length > 0 && (
-                <Button
-                  size="sm"
-                  onClick={handleAbilityClick}
-                  className="bg-jumbo-yellow text-jumbo-bg font-bold shadow-bouncy-sm hover:brightness-110"
-                >
-                  ⚡ Use Ability
-                </Button>
-              )}
-            </div>
-            {abilityMode && (
-              <div className="mt-2 flex items-center gap-2 text-xs px-2">
-                <span className="font-bold text-jumbo-yellow">
-                  {selectedPiece.character === 'mage' ? '🎯 Tap a yellow tile to teleport' : '🔄 Tap a piece to swap with'}
-                </span>
-                <Button size="sm" variant="outline" onClick={handleCancelAbility}>Cancel</Button>
-              </div>
-            )}
+              <AnimatePresence>
+                {abilityMode && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="mt-2 flex items-center gap-2 text-xs px-2">
+                      <span className="font-bold text-jumbo-yellow flex items-center gap-1">
+                        {selectedPiece.character === 'mage' ? '🎯 Tap a yellow tile to teleport' : '🔄 Tap a piece to swap with'}
+                      </span>
+                      <Button size="sm" variant="outline" onClick={handleCancelAbility}>Cancel</Button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* ===== Onboarding hint (only shows on first turn) ===== */}
+      <AnimatePresence>
+        {!selectedPiece && isMyTurn && state.movesThisTurn === 0 && Object.values(state.board.pieces).filter(p => p.team === mySlot?.team).length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="rounded-xl p-2.5 text-center text-xs font-bold flex items-center justify-center gap-2"
+            style={{
+              background: 'linear-gradient(135deg, rgba(255,210,63,0.2), rgba(255,79,163,0.2))',
+              border: '2px dashed #ffd23f',
+              color: '#1a0d2e',
+            }}
+          >
+            <motion.span
+              animate={{ x: [0, 4, 0] }}
+              transition={{ duration: 1, repeat: Infinity }}
+            >👆</motion.span>
+            Tap one of your pieces to see its moves
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ===== Chaos event banner ===== */}
+      {/* ===== Chaos event banner — fixed position, doesn't shift layout ===== */}
       <AnimatePresence>
         {chaos && (
           <motion.div
@@ -293,16 +380,16 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
               }}
             />
             <div className="relative">
-              <div className="text-3xl mb-1">{chaos.emoji}</div>
-              <div className="font-bold text-jumbo-bg text-lg" style={{ textShadow: '0 1px 0 rgba(255,255,255,0.5)' }}>CHAOS: {chaos.label}</div>
+              <div className="text-2xl mb-0.5">{chaos.emoji}</div>
+              <div className="font-bold text-jumbo-bg text-base" style={{ textShadow: '0 1px 0 rgba(255,255,255,0.5)' }}>CHAOS: {chaos.label}</div>
               <div className="text-jumbo-bg/80 text-xs">{chaos.desc}</div>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ===== Emote floaters ===== */}
-      <div className="fixed inset-0 pointer-events-none z-50">
+      {/* ===== Emote floaters — fixed position, never affects layout ===== */}
+      <div className="fixed inset-0 pointer-events-none z-[60]">
         <AnimatePresence>
           {lastEmotes.slice(-5).map((ev, i) => (
             <motion.div
@@ -321,23 +408,23 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
         </AnimatePresence>
       </div>
 
-      {/* ===== Emote wheel ===== */}
-      <div className="fixed bottom-3 right-3 z-40">
+      {/* ===== Emote wheel — fixed bottom-right, doesn't shift ===== */}
+      <div className="fixed bottom-3 right-3 z-[70] flex flex-col items-end gap-2">
         <AnimatePresence>
           {emoteOpen && (
             <motion.div
-              initial={{ scale: 0, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0, opacity: 0 }}
-              transition={{ type: 'spring' }}
-              className="grid grid-cols-4 gap-2 mb-2 p-3 rounded-2xl"
+              initial={{ scale: 0, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0, opacity: 0, y: 10 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+              className="grid grid-cols-4 gap-1.5 p-2.5 rounded-2xl"
               style={{
                 background: 'linear-gradient(135deg, #fff8ef, #ffe1ef)',
                 border: '3px solid #ff4fa3',
-                boxShadow: '0 6px 0 #c43678, 0 10px 20px rgba(0,0,0,0.3)',
+                boxShadow: '0 5px 0 #c43678, 0 10px 20px rgba(0,0,0,0.3)',
               }}
             >
-              {EMOJI_WHEEL.map((e, i) => (
+              {EMOJI_WHEEL.map((e) => (
                 <motion.button
                   key={e}
                   whileHover={{ scale: 1.2, rotate: 5 }}
@@ -346,8 +433,7 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
                     sendEmote(e)
                     setEmoteOpen(false)
                   }}
-                  className="text-2xl p-2 rounded-lg hover:bg-white/60"
-                  style={{ animationDelay: `${i * 30}ms` }}
+                  className="text-2xl p-1.5 rounded-lg hover:bg-white/60"
                 >
                   {e}
                 </motion.button>
@@ -359,12 +445,13 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
           whileTap={{ scale: 0.9 }}
           whileHover={{ scale: 1.05 }}
           onClick={() => setEmoteOpen(o => !o)}
-          className="w-16 h-16 rounded-full flex items-center justify-center text-3xl"
+          className="w-14 h-14 rounded-full flex items-center justify-center text-2xl"
           style={{
             background: emoteOpen ? 'linear-gradient(135deg, #ff5252, #c0392b)' : 'linear-gradient(135deg, #ffd23f, #e6b800)',
             border: '3px solid #1a0d2e',
-            boxShadow: '0 6px 0 #6b3aa0, 0 10px 20px rgba(0,0,0,0.3)',
+            boxShadow: '0 5px 0 #6b3aa0, 0 8px 16px rgba(0,0,0,0.3)',
           }}
+          aria-label="Toggle emote wheel"
         >
           {emoteOpen ? '✕' : '😜'}
         </motion.button>
@@ -383,29 +470,56 @@ function TeamScoreboard({ label, color, colorDark, players, isCurrent, myPlayerI
 }) {
   return (
     <motion.div
-      animate={isCurrent ? { boxShadow: `0 0 16px ${color}80` } : {}}
+      layout
+      animate={isCurrent ? { boxShadow: `0 3px 0 ${colorDark}, 0 0 16px ${color}80` } : { boxShadow: `0 3px 0 ${colorDark}` }}
+      transition={{ duration: 0.3 }}
       className="rounded-2xl p-2"
       style={{
         background: `linear-gradient(135deg, ${color}, ${colorDark})`,
         border: `3px solid ${isCurrent ? '#ffd23f' : '#1a0d2e'}`,
-        boxShadow: `0 3px 0 ${colorDark}`,
       }}
     >
       <div className="text-xs font-bold text-white/90 mb-1 flex items-center justify-between">
         <span>{label === 'RED' ? '🔴' : '🔵'} {label}</span>
-        {isCurrent && <span className="text-[10px] bg-white/20 px-1.5 rounded-full">▶ TURN</span>}
+        <AnimatePresence>
+          {isCurrent && (
+            <motion.span
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0, opacity: 0 }}
+              className="text-[10px] bg-white/25 px-1.5 rounded-full"
+            >▶ TURN</motion.span>
+          )}
+        </AnimatePresence>
       </div>
       <div className="space-y-1">
-        {players.length === 0 && <div className="text-xs text-white/60 italic">No players</div>}
-        {players.map(p => (
-          <div key={p.id} className="flex items-center gap-1.5 text-xs">
-            {p.avatar && <AnimalAvatar kind={p.avatar} size={20} />}
-            <span className={`flex-1 truncate text-white ${p.id === myPlayerId ? 'font-bold underline' : ''}`}>
-              {p.isBot && '🤖 '}{p.name}
-            </span>
-            <span className="font-mono text-white/90 bg-black/30 px-1 rounded text-[10px]">{p.score}</span>
-          </div>
-        ))}
+        <AnimatePresence mode="popLayout">
+          {players.length === 0 && <div className="text-xs text-white/60 italic">No players</div>}
+          {players.map(p => (
+            <motion.div
+              key={p.id}
+              layout
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex items-center gap-1.5 text-xs"
+            >
+              {p.avatar && <AnimalAvatar kind={p.avatar} size={20} />}
+              <span className={`flex-1 truncate text-white ${p.id === myPlayerId ? 'font-bold underline' : ''}`}>
+                {p.isBot && '🤖 '}{p.name}
+              </span>
+              <motion.span
+                key={p.score}
+                initial={{ scale: 1.4, color: '#ffd23f' }}
+                animate={{ scale: 1, color: 'rgba(255,255,255,0.9)' }}
+                transition={{ duration: 0.4 }}
+                className="font-mono bg-black/30 px-1 rounded text-[10px]"
+              >
+                {p.score}
+              </motion.span>
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
     </motion.div>
   )
