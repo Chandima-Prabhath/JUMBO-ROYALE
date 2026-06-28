@@ -1,7 +1,15 @@
 'use client'
 import { Piece, CharacterClass } from '@/game/types'
+import { TankFace, SpeedsterFace, MageFace, JesterFace, Crown, ShieldIcon } from './assets'
+import { motion } from 'framer-motion'
 
-// Visual representation of a piece — big, googly-eyed, cartoonish.
+const FACES: Record<CharacterClass, typeof TankFace> = {
+  tank: TankFace,
+  speedster: SpeedsterFace,
+  mage: MageFace,
+  jester: JesterFace,
+}
+
 export function PieceVisual({
   piece,
   size = 44,
@@ -17,110 +25,118 @@ export function PieceVisual({
   isMyTurn?: boolean
   isMine?: boolean
 }) {
-  const teamColor = piece.team === 'red' ? '#ff4fa3' : piece.team === 'blue' ? '#4f7bff' : '#6b3aa0'
-  const teamColorDark = piece.team === 'red' ? '#c43678' : piece.team === 'blue' ? '#3457b0' : '#4a2670'
-
-  // Character emoji/face
-  const charEmoji: Record<CharacterClass, string> = {
-    tank: '🛡️',
-    speedster: '⚡',
-    mage: '🧙',
-    jester: '🤡',
-  }
+  const Face = FACES[piece.character]
+  const faceSize = Math.floor(size * 1.0)
 
   return (
-    <div
-      className={`relative rounded-full flex items-center justify-center transition-transform ${isMyTurn && isMine && !selected ? 'animate-pulse' : ''}`}
-      style={{
-        width: size,
-        height: size,
-        background: `radial-gradient(circle at 30% 30%, ${teamColor}, ${teamColorDark})`,
-        border: '3px solid #1a0d2e',
-        boxShadow: selected
-          ? `0 0 0 4px #ffd23f, 0 6px 0 rgba(26,13,46,0.3), 0 10px 16px rgba(0,0,0,0.3)`
-          : highlight
-          ? `0 0 0 3px #2ecc71, 0 4px 0 rgba(26,13,46,0.3)`
-          : isMyTurn && isMine
-          ? `0 0 0 2px rgba(255, 210, 63, 0.6), 0 4px 0 rgba(26,13,46,0.3), 0 6px 12px rgba(0,0,0,0.25)`
-          : `0 4px 0 rgba(26,13,46,0.3), 0 6px 12px rgba(0,0,0,0.25)`,
-        transform: selected ? 'scale(1.08)' : 'scale(1)',
-      }}
+    <motion.div
+      className="relative flex items-center justify-center"
+      animate={selected ? { scale: 1.12 } : { scale: 1 }}
+      whileHover={isMine && isMyTurn ? { scale: 1.06, y: -2 } : {}}
+      transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+      style={{ width: size, height: size }}
     >
-      {/* Googly eyes */}
-      <div className="absolute flex gap-0.5" style={{ top: size * 0.18 }}>
-        <div className="googly-eye" style={{ width: size * 0.18, height: size * 0.18 }} />
-        <div className="googly-eye" style={{ width: size * 0.18, height: size * 0.18 }} />
-      </div>
-      {/* Character emoji */}
+      {/* Outer ring (selection / highlight / my-turn pulse) */}
       <div
-        className="absolute"
+        className="absolute inset-0 rounded-full transition-all"
         style={{
-          bottom: size * 0.12,
-          fontSize: size * 0.42,
-          lineHeight: 1,
-          filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.4))',
+          boxShadow: selected
+            ? '0 0 0 4px #ffd23f, 0 0 24px rgba(255, 210, 63, 0.6)'
+            : highlight
+            ? '0 0 0 3px #ff5252, 0 0 18px rgba(255, 82, 82, 0.5)'
+            : isMyTurn && isMine
+            ? '0 0 0 2px rgba(255, 210, 63, 0.6), 0 0 12px rgba(255, 210, 63, 0.3)'
+            : 'none',
         }}
-      >
-        {charEmoji[piece.character]}
-      </div>
+      />
+
+      {/* Base shadow */}
+      <div
+        className="absolute rounded-full"
+        style={{
+          width: size * 0.85,
+          height: size * 0.18,
+          bottom: -size * 0.08,
+          background: 'radial-gradient(ellipse, rgba(0,0,0,0.4), transparent 70%)',
+          filter: 'blur(2px)',
+        }}
+      />
+
+      {/* Face SVG */}
+      <Face size={faceSize} team={piece.team} />
+
       {/* King crown */}
       {piece.isKing && (
         <div
           className="absolute"
           style={{
-            top: -size * 0.18,
+            top: -size * 0.22,
             left: '50%',
             transform: 'translateX(-50%)',
-            fontSize: size * 0.45,
+            filter: 'drop-shadow(0 2px 2px rgba(0,0,0,0.4))',
           }}
         >
-          👑
+          <motion.div
+            animate={{ y: [0, -2, 0] }}
+            transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+          >
+            <Crown size={Math.floor(size * 0.6)} team={piece.team} />
+          </motion.div>
         </div>
       )}
-      {/* Frozen indicator */}
+
+      {/* Frozen overlay */}
       {piece.frozenTurns > 0 && (
-        <div
+        <motion.div
           className="absolute inset-0 rounded-full flex items-center justify-center"
           style={{
-            background: 'rgba(79, 200, 255, 0.4)',
+            background: 'rgba(79, 200, 255, 0.35)',
             border: '2px solid #4fc8ff',
+            boxShadow: '0 0 12px rgba(79, 200, 255, 0.6), inset 0 0 8px rgba(255,255,255,0.5)',
           }}
+          animate={{ opacity: [0.7, 1, 0.7] }}
+          transition={{ duration: 1.5, repeat: Infinity }}
         >
-          <span style={{ fontSize: size * 0.4 }}>❄️</span>
-        </div>
+          <svg width={size * 0.5} height={size * 0.5} viewBox="0 0 24 24" fill="none">
+            <path d="M12 2 L13 8 L19 7 L14 12 L19 17 L13 16 L12 22 L11 16 L5 17 L10 12 L5 7 L11 8 Z" fill="white" stroke="#4fc8ff" strokeWidth="1.5" />
+          </svg>
+        </motion.div>
       )}
-      {/* Shield indicator */}
+
+      {/* Shield badge */}
       {piece.hasShield && (
         <div
           className="absolute"
           style={{
             top: -size * 0.05,
             right: -size * 0.05,
-            fontSize: size * 0.35,
+            filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.5))',
           }}
         >
-          🛡️
+          <ShieldIcon size={Math.floor(size * 0.42)} />
         </div>
       )}
-      {/* HP for tanks/boss */}
+
+      {/* HP badge */}
       {piece.hp > 1 && (
         <div
-          className="absolute px-1 rounded-full text-white font-bold"
+          className="absolute px-1.5 rounded-full text-white font-bold flex items-center justify-center"
           style={{
             bottom: -size * 0.12,
             left: '50%',
             transform: 'translateX(-50%)',
-            background: '#ff5252',
+            background: 'linear-gradient(180deg, #ff7575, #c0392b)',
             border: '2px solid #1a0d2e',
-            fontSize: size * 0.28,
+            fontSize: size * 0.32,
             lineHeight: 1,
-            minWidth: size * 0.4,
-            textAlign: 'center',
+            minWidth: size * 0.5,
+            height: size * 0.36,
+            boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
           }}
         >
           {piece.hp}
         </div>
       )}
-    </div>
+    </motion.div>
   )
 }

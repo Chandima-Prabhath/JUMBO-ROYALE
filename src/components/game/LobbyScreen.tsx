@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { SoundToggle } from '@/components/game/SoundToggle'
+import { AnimalAvatar, TankFace, SpeedsterFace, MageFace, JesterFace } from '@/components/game/assets'
 import { toast } from 'sonner'
 
 const BOT_DIFFICULTIES: { id: BotDifficulty; label: string; emoji: string; desc: string }[] = [
@@ -16,14 +17,12 @@ const BOT_DIFFICULTIES: { id: BotDifficulty; label: string; emoji: string; desc:
   { id: 'brutal', label: 'Brutal', emoji: '💀', desc: 'Plays optimally, no mercy' },
 ]
 
-const CHARACTERS: { id: CharacterClass; name: string; emoji: string; desc: string }[] = [
-  { id: 'tank', name: 'Tank', emoji: '🛡️', desc: '2 HP, starts with shield. Slow but tough.' },
-  { id: 'speedster', name: 'Speedster', emoji: '⚡', desc: 'Sneaky diagonal moves. Agile.' },
-  { id: 'mage', name: 'Mage', emoji: '🧙', desc: 'Teleport once. Big brain plays.' },
-  { id: 'jester', name: 'Jester', emoji: '🤡', desc: 'Swap places with anyone. Chaos!' },
+const CHARACTERS: { id: CharacterClass; name: string; emoji: string; desc: string; Face: typeof TankFace }[] = [
+  { id: 'tank', name: 'Tank', emoji: '🛡️', desc: '2 HP, starts with shield. Slow but tough.', Face: TankFace },
+  { id: 'speedster', name: 'Speedster', emoji: '⚡', desc: 'Sneaky diagonal moves. Agile.', Face: SpeedsterFace },
+  { id: 'mage', name: 'Mage', emoji: '🧙', desc: 'Teleport once. Big brain plays.', Face: MageFace },
+  { id: 'jester', name: 'Jester', emoji: '🤡', desc: 'Swap places with anyone. Chaos!', Face: JesterFace },
 ]
-
-const EMOJI_WHEEL = ['😂', '🔥', '💀', '🎉', '👏', '😭', '🤔', '👀', '❤️', '🤯', '🥳', '😤']
 
 export function LobbyScreen() {
   const { state, myPlayerId, updatePlayer, startGame, sendChat, chatMessages } = useJumbo()
@@ -33,8 +32,8 @@ export function LobbyScreen() {
 
   const mySlot = state.players.find(p => p.id === myPlayerId)
   const isHost = mySlot?.isHost
-  const allReady = state.players.filter(p => p.connected).every(p => p.ready || p.isHost)
   const connectedPlayers = state.players.filter(p => p.connected)
+  const allReady = connectedPlayers.every(p => p.ready || p.isHost)
 
   const handleTeamPick = (team: AnyTeam) => {
     if (state.mode === 'coop') {
@@ -73,11 +72,14 @@ export function LobbyScreen() {
       <header className="px-4 pt-4 pb-2">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-jumbo-pink text-stroke-sm">
+            <h1 className="text-2xl sm:text-3xl font-bold text-jumbo-pink" style={{ textShadow: '0 2px 0 #c43678, 0 4px 8px rgba(255,79,163,0.3)' }}>
               JUMBO ROYALE
             </h1>
-            <p className="text-sm text-muted-foreground">
-              Room: <span className="font-mono font-bold text-jumbo-yellow">{state.roomCode}</span> · Mode: {state.mode === 'pvp' ? '⚔️ PvP Chaos' : '🤝 Co-op vs Boss'}
+            <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <span>Room:</span>
+              <span className="font-mono font-bold text-jumbo-yellow bg-jumbo-purple px-2 py-0.5 rounded">{state.roomCode}</span>
+              <span>·</span>
+              <span>{state.mode === 'pvp' ? '⚔️ PvP Chaos' : '🤝 Co-op vs Boss'}</span>
             </p>
           </div>
           <div className="flex flex-col items-end gap-1">
@@ -100,42 +102,62 @@ export function LobbyScreen() {
       </header>
 
       <main className="flex-1 px-4 pb-4 max-w-4xl w-full mx-auto flex flex-col gap-4">
-        {/* Player list */}
+        {/* Players + Bots */}
         <Card className="p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-bold text-lg">Players ({connectedPlayers.length}/6)</h2>
+            <h2 className="font-bold text-lg flex items-center gap-2">
+              <span className="text-jumbo-pink">👥</span> Players ({connectedPlayers.length}/6)
+            </h2>
             {isHost && (
               <Button
                 onClick={handleStart}
                 disabled={connectedPlayers.length < 2 || !allReady}
-                className="bg-jumbo-green text-white font-bold shadow-bouncy-sm hover:brightness-110"
+                className="font-bold shadow-bouncy-sm hover:brightness-110"
+                style={{
+                  background: connectedPlayers.length < 2 || !allReady
+                    ? 'linear-gradient(135deg, #9b9b9b, #6b6b6b)'
+                    : 'linear-gradient(135deg, #2ecc71, #1a9850)',
+                  color: 'white',
+                  border: '2px solid #1a0d2e',
+                }}
               >
                 ▶️ Start Game
               </Button>
             )}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {state.players.map(p => (
-              <div
+            {state.players.map((p, i) => (
+              <motion.div
                 key={p.id}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.05 }}
                 className={`p-3 rounded-xl border-2 flex items-center gap-3 ${
                   p.id === myPlayerId ? 'border-jumbo-yellow bg-yellow-50' : 'border-border'
                 } ${!p.connected ? 'opacity-40' : ''} ${p.isBot ? 'bg-purple-50 border-purple-200' : ''}`}
               >
-                <div className="text-2xl">{p.avatar}</div>
+                {p.avatar && <AnimalAvatar kind={p.avatar} size={36} />}
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 flex-wrap">
                     <span className="font-bold truncate">{p.name}</span>
                     {p.isHost && <span className="text-xs">👑</span>}
                     {p.isBot && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-purple-200 text-purple-900 font-bold">
-                        🤖 {p.botDifficulty?.toUpperCase()}
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-200 text-purple-900 font-bold uppercase">
+                        🤖 {p.botDifficulty}
                       </span>
                     )}
-                    {p.ready && <span className="text-jumbo-green text-sm">✓ Ready</span>}
+                    {p.ready && (
+                      <motion.span
+                        initial={{ scale: 0 }}
+                        animate={{ scale: 1 }}
+                        className="text-jumbo-green text-sm font-bold"
+                      >
+                        ✓ Ready
+                      </motion.span>
+                    )}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {p.team === 'red' ? '🔴 Red' : p.team === 'blue' ? '🔵 Blue' : '🟣 Boss'} · {CHARACTERS.find(c => c.id === p.character)?.emoji} {CHARACTERS.find(c => c.id === p.character)?.name}
+                    {p.team === 'red' ? '🔴 Red' : p.team === 'blue' ? '🔵 Blue' : '🟣 Boss'}
                   </div>
                 </div>
                 {p.isBot && isHost && (
@@ -149,30 +171,39 @@ export function LobbyScreen() {
                     ✕
                   </Button>
                 )}
-              </div>
+              </motion.div>
             ))}
           </div>
 
-          {/* Add bot panel (host only, lobby only) */}
+          {/* Add bot panel */}
           {isHost && connectedPlayers.length < 6 && (
-            <div className="mt-3 p-3 rounded-xl border-2 border-dashed border-purple-200 bg-purple-50/50">
-              <div className="text-sm font-bold mb-2">🤖 Add a bot player</div>
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="mt-3 p-3 rounded-xl border-2 border-dashed border-purple-300 bg-purple-50/50"
+            >
+              <div className="text-sm font-bold mb-2 flex items-center gap-1">🤖 Add a bot player</div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {BOT_DIFFICULTIES.map(d => (
-                  <button
+                {BOT_DIFFICULTIES.map((d, i) => (
+                  <motion.button
                     key={d.id}
+                    whileHover={{ scale: 1.03, y: -2 }}
+                    whileTap={{ scale: 0.97 }}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
                     onClick={() => useJumbo.getState().addBot(d.id)}
-                    className="p-2 rounded-lg border-2 border-purple-200 bg-white hover:border-purple-400 hover:bg-purple-50 transition-all text-left"
+                    className="p-2 rounded-xl border-2 border-purple-200 bg-white hover:border-purple-400 text-left transition-colors"
                   >
                     <div className="flex items-center gap-1 mb-0.5">
                       <span className="text-lg">{d.emoji}</span>
                       <span className="font-bold text-sm">{d.label}</span>
                     </div>
                     <p className="text-xs text-muted-foreground leading-tight">{d.desc}</p>
-                  </button>
+                  </motion.button>
                 ))}
               </div>
-            </div>
+            </motion.div>
           )}
         </Card>
 
@@ -181,67 +212,110 @@ export function LobbyScreen() {
           {/* Team pick (PvP only) */}
           {state.mode === 'pvp' && (
             <Card className="p-4">
-              <h2 className="font-bold mb-3">Pick Team</h2>
+              <h2 className="font-bold mb-3 flex items-center gap-2"><span>🎨</span> Pick Team</h2>
               <div className="grid grid-cols-2 gap-2">
-                <Button
-                  variant={mySlot?.team === 'red' ? 'default' : 'outline'}
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
                   onClick={() => handleTeamPick('red')}
-                  className={mySlot?.team === 'red' ? 'bg-jumbo-pink text-white' : ''}
+                  className={`p-4 rounded-xl border-2 transition-all ${
+                    mySlot?.team === 'red'
+                      ? 'border-jumbo-yellow shadow-bouncy-sm'
+                      : 'border-border hover:border-jumbo-pink'
+                  }`}
+                  style={{
+                    background: mySlot?.team === 'red'
+                      ? 'linear-gradient(135deg, #ff4fa3, #c43678)'
+                      : 'linear-gradient(135deg, #fff8ef, #ffe1ef)',
+                    color: mySlot?.team === 'red' ? 'white' : '#1a0d2e',
+                  }}
                 >
-                  🔴 Red Team
-                </Button>
-                <Button
-                  variant={mySlot?.team === 'blue' ? 'default' : 'outline'}
+                  <div className="font-bold">🔴 Red Team</div>
+                  <div className="text-xs opacity-80">{state.players.filter(p => p.team === 'red').length}/3 players</div>
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
                   onClick={() => handleTeamPick('blue')}
-                  className={mySlot?.team === 'blue' ? 'bg-jumbo-blue text-white' : ''}
+                  className={`p-4 rounded-xl border-2 transition-all ${
+                    mySlot?.team === 'blue'
+                      ? 'border-jumbo-yellow shadow-bouncy-sm'
+                      : 'border-border hover:border-jumbo-blue'
+                  }`}
+                  style={{
+                    background: mySlot?.team === 'blue'
+                      ? 'linear-gradient(135deg, #4f7bff, #2848a8)'
+                      : 'linear-gradient(135deg, #fff8ef, #e1ecff)',
+                    color: mySlot?.team === 'blue' ? 'white' : '#1a0d2e',
+                  }}
                 >
-                  🔵 Blue Team
-                </Button>
+                  <div className="font-bold">🔵 Blue Team</div>
+                  <div className="text-xs opacity-80">{state.players.filter(p => p.team === 'blue').length}/3 players</div>
+                </motion.button>
               </div>
             </Card>
           )}
 
           {/* Character pick */}
           <Card className={`p-4 ${state.mode === 'coop' ? 'md:col-span-2' : ''}`}>
-            <h2 className="font-bold mb-3">Pick Character</h2>
-            <div className="grid grid-cols-2 gap-2">
-              {CHARACTERS.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => handleCharacterPick(c.id)}
-                  className={`p-3 rounded-xl border-2 text-left transition-all ${
-                    mySlot?.character === c.id
-                      ? 'border-jumbo-yellow bg-yellow-50 shadow-bouncy-sm'
-                      : 'border-border hover:border-jumbo-pink'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-2xl">{c.emoji}</span>
-                    <span className="font-bold">{c.name}</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{c.desc}</p>
-                </button>
-              ))}
+            <h2 className="font-bold mb-3 flex items-center gap-2"><span>🎭</span> Pick Character</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {CHARACTERS.map((c, i) => {
+                const isPicked = mySlot?.character === c.id
+                return (
+                  <motion.button
+                    key={c.id}
+                    whileHover={{ scale: 1.03, y: -3 }}
+                    whileTap={{ scale: 0.97 }}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.05 }}
+                    onClick={() => handleCharacterPick(c.id)}
+                    className={`p-3 rounded-xl border-2 text-center transition-all ${
+                      isPicked
+                        ? 'border-jumbo-yellow bg-yellow-50 shadow-bouncy-sm'
+                        : 'border-border hover:border-jumbo-pink bg-white'
+                    }`}
+                  >
+                    <div className="flex justify-center mb-1">
+                      <motion.div
+                        animate={isPicked ? { y: [0, -2, 0] } : {}}
+                        transition={{ duration: 1.5, repeat: Infinity }}
+                      >
+                        <c.Face size={56} team={mySlot?.team || 'red'} />
+                      </motion.div>
+                    </div>
+                    <div className="font-bold text-sm">{c.name}</div>
+                    <p className="text-xs text-muted-foreground leading-tight mt-0.5">{c.desc}</p>
+                  </motion.button>
+                )
+              })}
             </div>
           </Card>
         </div>
 
         {/* Ready button */}
-        <Button
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
           onClick={handleReady}
-          variant={mySlot?.ready ? 'default' : 'outline'}
-          size="lg"
-          className={`w-full font-bold shadow-bouncy-sm ${
-            mySlot?.ready ? 'bg-jumbo-green text-white' : ''
-          }`}
+          className="w-full py-4 rounded-2xl font-bold text-lg transition-all"
+          style={{
+            background: mySlot?.ready
+              ? 'linear-gradient(135deg, #2ecc71, #1a9850)'
+              : 'linear-gradient(135deg, #ffd23f, #e6b800)',
+            color: mySlot?.ready ? 'white' : '#1a0d2e',
+            border: '3px solid #1a0d2e',
+            boxShadow: '0 6px 0 #6b3aa0, 0 10px 20px rgba(0,0,0,0.2)',
+          }}
         >
-          {mySlot?.ready ? '✓ Ready!' : 'Tap when ready'}
-        </Button>
+          {mySlot?.ready ? '✓ Ready! Tap to unready' : 'Tap when ready'}
+        </motion.button>
 
         {/* Chat */}
         <Card className="p-4 flex-1 min-h-[200px] flex flex-col">
-          <h2 className="font-bold mb-2">Chat</h2>
-          <div className="flex-1 overflow-y-auto min-h-[120px] max-h-[240px] mb-2 space-y-1">
+          <h2 className="font-bold mb-2 flex items-center gap-2"><span>💬</span> Chat</h2>
+          <div className="flex-1 overflow-y-auto min-h-[120px] max-h-[240px] mb-2 space-y-1.5">
             <AnimatePresence>
               {chatMessages.length === 0 && (
                 <p className="text-sm text-muted-foreground italic">Say hi to your friends! 👋</p>
@@ -249,13 +323,15 @@ export function LobbyScreen() {
               {chatMessages.map((m, i) => (
                 <motion.div
                   key={i}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="text-sm flex gap-2"
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="text-sm flex gap-2 items-start"
                 >
-                  <span>{m.avatar}</span>
-                  <span className="font-bold">{m.name}:</span>
-                  <span className="flex-1 break-words">{m.text}</span>
+                  {m.avatar && <AnimalAvatar kind={m.avatar} size={24} />}
+                  <div>
+                    <span className="font-bold">{m.name}:</span>{' '}
+                    <span className="break-words">{m.text}</span>
+                  </div>
                 </motion.div>
               ))}
             </AnimatePresence>
@@ -268,7 +344,7 @@ export function LobbyScreen() {
               maxLength={200}
               autoComplete="off"
             />
-            <Button type="submit" size="sm">Send</Button>
+            <Button type="submit" size="sm" className="bg-jumbo-pink text-white">Send</Button>
           </form>
         </Card>
       </main>
