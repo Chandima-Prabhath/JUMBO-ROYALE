@@ -1,0 +1,56 @@
+// Jumbo Royale - Prisma schema
+// Groundwork for future persistent accounts + leaderboard
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Guest or registered player. Right now we mostly use the guestName,
+// but email/password are nullable so we can upgrade guests to full accounts later.
+model Player {
+  id         String   @id @default(cuid())
+  email      String?  @unique
+  password   String?  // hashed; null for guests
+  guestName  String
+  avatar     String?  // emoji or asset id
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  matches    MatchPlayer[]
+}
+
+// A finished match record (for leaderboard + history). Live matches live in memory.
+model Match {
+  id         String   @id @default(cuid())
+  mode       String   // 'pvp' | 'coop'
+  roomCode   String
+  winnerTeam String?  // 'red' | 'blue' | 'boss' | null (draw)
+  startedAt  DateTime @default(now())
+  endedAt    DateTime @default(now())
+  rounds     Int      @default(1)
+  chaosEvents Int     @default(0)
+
+  players    MatchPlayer[]
+}
+
+model MatchPlayer {
+  id        String   @id @default(cuid())
+  matchId   String
+  playerId  String
+  team      String   // 'red' | 'blue' | 'boss'
+  character String   // 'tank' | 'speedster' | 'mage' | 'jester'
+  captures  Int      @default(0)
+  survived  Boolean  @default(true)
+  finalScore Int     @default(0)
+
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  player    Player   @relation(fields: [playerId], references: [id])
+
+  @@index([matchId])
+  @@index([playerId])
+}
