@@ -25,7 +25,7 @@ function formatTime(ms: number) {
 }
 
 export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: { pieceId: string; targets: { row: number; col: number }[] } | null) => void }) {
-  const { state, myPlayerId, selectedPieceId, legalMoves, useAbility, sendEmote, lastEmotes, pendingChaos } = useJumbo()
+  const { state, myPlayerId, selectedPieceId, legalMoves, useAbility, sendEmote, lastEmotes, pendingChaos, bonusMove, botThinking } = useJumbo()
   const [emoteOpen, setEmoteOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   const [now, setNow] = useState(Date.now())
@@ -41,6 +41,22 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
   useEffect(() => {
     onAbilityModeChange(abilityMode)
   }, [abilityMode, onAbilityModeChange])
+
+  // Clear ability mode when selected piece is cleared or changes
+  useEffect(() => {
+    if (!selectedPieceId) {
+      setAbilityMode(null)
+    } else if (abilityMode && abilityMode.pieceId !== selectedPieceId) {
+      setAbilityMode(null)
+    }
+  }, [selectedPieceId])
+
+  // Clear ability mode when turn changes (no longer your turn)
+  useEffect(() => {
+    if (!isMyTurn && abilityMode) {
+      setAbilityMode(null)
+    }
+  }, [isMyTurn])
 
   // Detect turn change to trigger a pulse animation
   useEffect(() => {
@@ -120,8 +136,17 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
               <div className="text-[10px] font-bold text-white/80 uppercase tracking-wide leading-none">
                 {state.currentTurnTeam === 'boss' ? 'Boss Turn' : 'Turn'}
               </div>
-              <div className="font-bold text-white truncate text-sm leading-tight">
+              <div className="font-bold text-white truncate text-sm leading-tight flex items-center gap-1">
                 {currentSlot?.isBot && '🤖 '}{currentSlot?.name ?? '—'}
+                {botThinking && botThinking.playerName === currentSlot?.name && (
+                  <motion.span
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                    className="inline-block text-xs"
+                  >
+                    ⚙️
+                  </motion.span>
+                )}
               </div>
             </div>
           </div>
@@ -280,6 +305,27 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
                     {selectedPiece.frozenTurns > 0 && <span className="text-blue-500">❄️ {selectedPiece.frozenTurns}T</span>}
                     {selectedPiece.hasShield && <span className="text-cyan-500">🛡️ Shield</span>}
                   </div>
+                  {/* Ability status */}
+                  {(selectedPiece.character === 'mage' || selectedPiece.character === 'jester') && (
+                    <div className="text-[10px] mt-0.5">
+                      {selectedPiece.abilityUsed ? (
+                        <span className="text-muted-foreground">⚡ Ability used</span>
+                      ) : (
+                        <span className="text-jumbo-pink font-bold">⚡ Ability ready — tap Use Ability</span>
+                      )}
+                    </div>
+                  )}
+                  {/* Bonus move indicator */}
+                  {bonusMove && bonusMove.pieceId === selectedPiece.id && (
+                    <motion.div
+                      initial={{ scale: 0.8 }}
+                      animate={{ scale: [1, 1.05, 1] }}
+                      transition={{ duration: 1, repeat: Infinity }}
+                      className="text-[10px] mt-0.5 font-bold text-jumbo-green"
+                    >
+                      ⚡ BONUS MOVE ACTIVE — move again!
+                    </motion.div>
+                  )}
                   <div className="mt-1">
                     {legalMoves.length > 0 ? (
                       <div className="text-xs text-jumbo-green font-bold flex items-center gap-1">
@@ -390,23 +436,31 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
         )}
       </AnimatePresence>
 
-      {/* ===== Emote floaters — fixed position, never affects layout ===== */}
+      {/* ===== Emote floaters — fixed position, spread horizontally, fade fast ===== */}
       <div className="fixed inset-0 pointer-events-none z-[60]">
         <AnimatePresence>
-          {lastEmotes.slice(-5).map((ev, i) => (
-            <motion.div
-              key={ev.id}
-              initial={{ opacity: 0, scale: 0.5, y: 50, x: 0 }}
-              animate={{ opacity: 1, scale: 1.4, y: -100 - i * 50, x: (Math.random() - 0.5) * 60 }}
-              exit={{ opacity: 0, scale: 0.5 }}
-              transition={{ duration: 2, ease: 'easeOut' }}
-              className="absolute bottom-32 left-1/2 -translate-x-1/2 text-5xl"
-              style={{ filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.4))' }}
-            >
-              {ev.emoji}
-              <div className="text-xs text-center text-white bg-jumbo-purple/90 rounded px-1.5 py-0.5 mt-1 whitespace-nowrap">{ev.playerName}</div>
-            </motion.div>
-          ))}
+          {lastEmotes.slice(-3).map((ev, i) => {
+            // Spread floaters across the top of the board area
+            const xOffset = (i - 1) * 80 // -80, 0, +80 for 3 floaters
+            return (
+              <motion.div
+                key={ev.id}
+                initial={{ opacity: 0, scale: 0.3, y: 0 }}
+                animate={{ opacity: [0, 1, 1, 0], scale: [0.3, 1.2, 1, 0.8], y: -80 }}
+                exit={{ opacity: 0, scale: 0.5 }}
+                transition={{ duration: 1.8, ease: 'easeOut', times: [0, 0.15, 0.7, 1] }}
+                className="absolute top-1/3 text-4xl"
+                style={{
+                  left: `calc(50% + ${xOffset}px)`,
+                  transform: 'translateX(-50%)',
+                  filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.4))',
+                }}
+              >
+                {ev.emoji}
+                <div className="text-[10px] text-center text-white bg-jumbo-purple/90 rounded px-1 py-0.5 mt-0.5 whitespace-nowrap">{ev.playerName}</div>
+              </motion.div>
+            )
+          })}
         </AnimatePresence>
       </div>
 

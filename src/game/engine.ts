@@ -222,7 +222,7 @@ export interface PowerUpEffect {
 // Returns effect log entries for FX/sound.
 // NOTE: double_move and extra_jump are NOT applied here — the caller (move:make handler)
 // checks for them and skips the turn-end step.
-function applyPowerUpEffect(
+export function applyPowerUpEffect(
   mover: Piece,
   powerUp: PowerUpType,
   pieces: Record<string, Piece>,
@@ -248,7 +248,7 @@ function applyPowerUpEffect(
       break
 
     case 'freeze': {
-      // Freeze the nearest opponent piece for 1 turn
+      // Freeze the nearest opponent piece for 1 turn (skips their next turn)
       if (opponents.length > 0) {
         let nearest = opponents[0]
         let minDist = Math.abs(nearest.row - mover.row) + Math.abs(nearest.col - mover.col)
@@ -259,7 +259,10 @@ function applyPowerUpEffect(
             nearest = o
           }
         }
-        nearest.frozenTurns = Math.max(nearest.frozenTurns, 2) // 2 because it'll be decremented once at turn end
+        // frozenTurns = 1 means: the piece can't move on its team's next turn.
+        // nextTurn() decrements frozenTurns at the END of the frozen team's turn,
+        // so 1 → 0 after one skipped turn.
+        nearest.frozenTurns = Math.max(nearest.frozenTurns, 1)
         effects.push({ type: 'freeze', pieceId: nearest.id })
       }
       break

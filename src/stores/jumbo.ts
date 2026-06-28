@@ -19,6 +19,9 @@ interface JumboStore {
   fxQueue: { id: string; type: string; pieceId?: string; pieceIds?: string[] }[]
   powerupCollected: { id: string; playerName: string; powerUp: PowerUpType; effects: any[]; timestamp: number } | null
   bonusMove: { pieceId: string; powerUp: PowerUpType } | null
+  lastMove: { pieceId: string; fromRow: number; fromCol: number; toRow: number; toCol: number; playerName: string; team: string; kind: string; capturedCount: number; timestamp: number } | null
+  moveLog: { id: string; playerName: string; team: string; pieceId: string; fromRow: number; fromCol: number; toRow: number; toCol: number; kind: string; capturedCount: number; abilityUsed: boolean; reason: string; timestamp: number }[]
+  botThinking: { playerName: string } | null
 
   // actions
   init: () => void
@@ -52,6 +55,9 @@ export const useJumbo = create<JumboStore>((set, get) => ({
   fxQueue: [],
   powerupCollected: null,
   bonusMove: null,
+  lastMove: null,
+  moveLog: [],
+  botThinking: null,
 
   init: () => {
     if (get().connected) return
@@ -126,7 +132,7 @@ export const useJumbo = create<JumboStore>((set, get) => ({
       playSfx('select')
     })
     socket.on('emote', (ev: EmoteEvent) => {
-      set(s => ({ lastEmotes: [...s.lastEmotes.slice(-30), ev] }))
+      set(s => ({ lastEmotes: [...s.lastEmotes.slice(-6), ev] }))
       playSfx('emote')
     })
     socket.on('chat', (msg) => {
@@ -184,6 +190,49 @@ export const useJumbo = create<JumboStore>((set, get) => ({
         const cur = get().bonusMove
         if (cur && cur.pieceId === data.pieceId) set({ bonusMove: null })
       }, 3000)
+    })
+    socket.on('move:made', (data: {
+      pieceId: string; fromRow: number; fromCol: number; toRow: number; toCol: number
+      playerName: string; team: string; isBot: boolean; kind: string; capturedCount: number
+      abilityUsed: boolean; pickedUpPowerUp?: PowerUpType; promotedToKing: boolean; reason?: string
+    }) => {
+      // Update lastMove for board highlight
+      set({
+        lastMove: {
+          pieceId: data.pieceId,
+          fromRow: data.fromRow,
+          fromCol: data.fromCol,
+          toRow: data.toRow,
+          toCol: data.toCol,
+          playerName: data.playerName,
+          team: data.team,
+          kind: data.kind,
+          capturedCount: data.capturedCount,
+          timestamp: Date.now(),
+        },
+      })
+      // Add to move log (keep last 20)
+      const logEntry = {
+        id: `${Date.now()}_${Math.random()}`,
+        playerName: data.playerName,
+        team: data.team,
+        pieceId: data.pieceId,
+        fromRow: data.fromRow,
+        fromCol: data.fromCol,
+        toRow: data.toRow,
+        toCol: data.toCol,
+        kind: data.kind,
+        capturedCount: data.capturedCount,
+        abilityUsed: data.abilityUsed,
+        reason: data.reason || '',
+        timestamp: Date.now(),
+      }
+      set(s => ({ moveLog: [...s.moveLog.slice(-19), logEntry] }))
+      // Clear bot thinking
+      set({ botThinking: null })
+    })
+    socket.on('bot:thinking', (data: { playerName: string }) => {
+      set({ botThinking: data })
     })
   },
 

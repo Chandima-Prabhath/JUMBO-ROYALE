@@ -14,6 +14,7 @@ import { SoundToggle } from '@/components/game/SoundToggle'
 import { AnimalAvatar, TankFace, SpeedsterFace, MageFace, JesterFace, Sparkle } from '@/components/game/assets'
 import { ConfettiBurst } from '@/components/game/Effects'
 import { PowerUpCollectedPopup, BonusMoveBanner } from '@/components/game/Codex'
+import { MoveLogPanel } from '@/components/game/MoveLogPanel'
 import { copyToClipboard } from '@/lib/clipboard'
 import { toast } from 'sonner'
 
@@ -119,10 +120,18 @@ export default function Home() {
           <div className="flex flex-col gap-2 lg:flex-1 lg:max-w-2xl lg:mx-auto lg:order-2 lg:self-start lg:sticky lg:top-3">
             <BonusMoveBanner />
             <GameBoard abilityMode={abilityMode} />
+            {/* Move log on mobile (below board) */}
+            <div className="lg:hidden">
+              <MoveLogPanel />
+            </div>
           </div>
           {/* Right column: HUD panels (desktop) or above board (mobile) */}
           <div className="flex flex-col gap-2 lg:w-[340px] lg:flex-shrink-0 lg:order-1">
             <GameHUD onAbilityModeChange={setAbilityMode} />
+            {/* Move log on desktop (below HUD) */}
+            <div className="hidden lg:block">
+              <MoveLogPanel />
+            </div>
           </div>
         </main>
       </div>

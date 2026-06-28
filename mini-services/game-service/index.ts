@@ -7,7 +7,7 @@ import {
   Move, EmoteEvent, Piece, BotDifficulty, PowerUpType,
 } from '../../src/game/types'
 import { createBoard, BOARD_SIZE, TURN_DURATION_SEC, MAX_MOVES_PER_TURN, CHAOS_INTERVAL_SEC } from '../../src/game/board'
-import { getLegalMoves, applyMove, getTeamMoves, getAbilityTargets } from '../../src/game/engine'
+import { getLegalMoves, applyMove, getTeamMoves, getAbilityTargets, applyPowerUpEffect, PowerUpEffect } from '../../src/game/engine'
 import { checkWinner, applyChaos, rollChaosEvent, pickBossMove, bossSummon } from '../../src/game/rules'
 import { pickBestMove, shouldUseAbility } from '../../src/game/ai'
 
@@ -25,6 +25,38 @@ const io = new Server(httpServer, {
 // In-memory rooms (authoritative)
 const rooms = new Map<string, GameState>()
 const socketToRoom = new Map<string, { roomCode: string; playerId: string }>()
+
+// Generate a human-readable reason for a bot's move choice
+function generateMoveReason(move: Move, team: AnyTeam, difficulty: BotDifficulty): string {
+  const captureCount = move.capturedPieceIds.length
+  if (move.kind === 'multi_capture' || (captureCount > 1)) {
+    return `Chain capture! Took ${captureCount} pieces in one move.`
+  }
+  if (captureCount === 1) {
+    return `Captured an enemy piece.`
+  }
+  if (move.pickedUpPowerUp) {
+    const puNames: Record<string, string> = {
+      double_move: 'Double Move (gets another move)',
+      freeze: 'Freeze (will freeze nearest enemy)',
+      swap: 'Swap (will swap with random enemy)',
+      bomb: 'Bomb (will destroy adjacent enemy)',
+      shield: 'Shield (gains protective shield)',
+      extra_jump: 'Extra Jump (gets another move)',
+    }
+    return `Grabbed ${puNames[move.pickedUpPowerUp] || move.pickedUpPowerUp} power-up.`
+  }
+  // Simple move — describe direction
+  const forward = team === 'red' ? -1 : 1
+  const dr = move.toRow - move.fromRow
+  if (dr === forward) {
+    return `Advanced forward toward enemy territory.`
+  }
+  if (dr === -forward) {
+    return `Moved backward (king retreat).`
+  }
+  return `Repositioned to control the board.`
+}
 
 function makeRoomCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -208,6 +240,8 @@ function scheduleBotTurnIfApplicable(state: GameState) {
   const difficulty = slot.botDifficulty || 'hard'
   // Faster thinking for easy bots, slower for brutal (feels more deliberate)
   const thinkTime = difficulty === 'easy' ? 600 : difficulty === 'medium' ? 900 : difficulty === 'hard' ? 1200 : 1500
+  // Emit 'bot:thinking' so client can show indicator
+  io.to(state.roomCode).emit('bot:thinking', { playerName: slot.name })
   setTimeout(() => runBotMove(state, slot.id), thinkTime + Math.random() * 400)
 }
 
@@ -263,6 +297,11 @@ function runBotMove(state: GameState, botPlayerId: string) {
     return
   }
 
+  // Capture original position before applying move
+  const botPieceBefore = state.board.pieces[best.pieceId]
+  const fromRow = botPieceBefore?.row ?? best.move.toRow
+  const fromCol = botPieceBefore?.col ?? best.move.toCol
+
   // Apply the move
   const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMove(state.board, best.move)
   state.board = board
@@ -293,6 +332,23 @@ function runBotMove(state: GameState, botPlayerId: string) {
   }
   state.movesThisTurn += 1
   state.version += 1
+  // Broadcast move details + AI reasoning
+  io.to(state.roomCode).emit('move:made', {
+    pieceId: best.pieceId,
+    fromRow,
+    fromCol,
+    toRow: best.move.toRow,
+    toCol: best.move.toCol,
+    playerName: slot.name,
+    team: slot.team,
+    isBot: true,
+    kind: best.move.kind,
+    capturedCount: best.move.capturedPieceIds.length,
+    abilityUsed: false,
+    pickedUpPowerUp,
+    promotedToKing,
+    reason: generateMoveReason(best.move, slot.team, difficulty),
+  })
   broadcastRoom(state.roomCode)
 
   // Check winner
@@ -354,13 +410,57 @@ function runBotChainCapture(state: GameState, botPlayerId: string, pieceId: stri
   for (const m of captures) {
     if (m.capturedPieceIds.length > best.capturedPieceIds.length) best = m
   }
-  const { board, promotedToKing } = applyMove(state.board, best)
+  const chainFromRow = piece.row
+  const chainFromCol = piece.col
+  const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMove(state.board, best)
   state.board = board
   slot.captures += best.capturedPieceIds.length
   slot.score += best.capturedPieceIds.length * 10
   if (promotedToKing) io.to(state.roomCode).emit('promote', pieceId)
+  // Broadcast power-up collection + effects
+  if (pickedUpPowerUp) {
+    io.to(state.roomCode).emit('powerup:collected', {
+      pieceId, powerUp: pickedUpPowerUp, playerName: slot.name, effects: appliedEffects,
+    })
+    slot.score += 5
+  }
+  for (const eff of appliedEffects) {
+    if (eff.type === 'freeze') io.to(state.roomCode).emit('fx', { type: 'freeze', pieceId: eff.pieceId })
+    else if (eff.type === 'swap' && eff.targetPieceIds) io.to(state.roomCode).emit('fx', { type: 'swap', pieceIds: [eff.pieceId, ...eff.targetPieceIds] })
+    else if (eff.type === 'bomb') io.to(state.roomCode).emit('fx', { type: 'bomb', pieceId: eff.pieceId })
+    else if (eff.type === 'shield') io.to(state.roomCode).emit('fx', { type: 'shield', pieceId: eff.pieceId })
+    else if (eff.type === 'shield_break') io.to(state.roomCode).emit('fx', { type: 'shield_break', pieceId: eff.pieceId })
+  }
   state.version += 1
+  // Broadcast move details for chain capture
+  io.to(state.roomCode).emit('move:made', {
+    pieceId,
+    fromRow: chainFromRow,
+    fromCol: chainFromCol,
+    toRow: best.toRow,
+    toCol: best.toCol,
+    playerName: slot.name,
+    team: slot.team,
+    isBot: true,
+    kind: best.kind,
+    capturedCount: best.capturedPieceIds.length,
+    abilityUsed: false,
+    pickedUpPowerUp,
+    promotedToKing,
+    reason: `Chain capture! Took ${best.capturedPieceIds.length} piece${best.capturedPieceIds.length > 1 ? 's' : ''}.`,
+  })
   broadcastRoom(state.roomCode)
+
+  // Check winner
+  const winner = checkWinner(state)
+  if (winner) {
+    state.phase = 'ended'
+    state.winnerTeam = winner
+    state.endedAt = Date.now()
+    state.version += 1
+    broadcastRoom(state.roomCode)
+    return
+  }
 
   // Check for further chains
   const movedPiece = state.board.pieces[pieceId]
@@ -370,6 +470,13 @@ function runBotChainCapture(state: GameState, botPlayerId: string, pieceId: stri
       setTimeout(() => runBotChainCapture(state, botPlayerId, pieceId), 500)
       return
     }
+  }
+  // double_move / extra_jump bonus
+  if (pickedUpPowerUp === 'double_move' || pickedUpPowerUp === 'extra_jump') {
+    state.turnStartedAt = Date.now()
+    io.to(state.roomCode).emit('bonus_move', { pieceId, powerUp: pickedUpPowerUp })
+    setTimeout(() => runBotMove(state, botPlayerId), 600)
+    return
   }
   setTimeout(() => {
     nextTurn(state)
@@ -393,28 +500,158 @@ function runBossTurn(state: GameState) {
     Object.assign(state, ns)
   }
 
-  // Make 1-2 moves if raging
+  // Make 1-2 moves if raging. Use recursive helper to handle chains + power-ups.
   const movesToMake = state.boss?.rage ? 2 : 1
-  for (let i = 0; i < movesToMake; i++) {
-    const pick = pickBossMove(state)
-    if (!pick) break
-    const { board, promotedToKing } = applyMove(state.board, pick.move)
-    state.board = board
-    if (pick.move.capturedPieceIds.length > 0) {
-      const playerSlot = state.players.find(p => p.id === 'boss')
-      if (playerSlot) playerSlot.captures += pick.move.capturedPieceIds.length
-    }
-    if (promotedToKing) {
-      io.to(state.roomCode).emit('promote', pick.pieceId)
-    }
-    state.version += 1
+  runBossMoveRecursive(state, movesToMake, 0)
+}
+
+// Helper: make N boss moves, handling chain captures + power-ups + bonus moves
+function runBossMoveRecursive(state: GameState, movesRemaining: number, depth: number) {
+  if (state.phase !== 'playing' || depth > 10) {
+    // End turn
+    broadcastRoom(state.roomCode)
+    setTimeout(() => {
+      nextTurn(state)
+      broadcastRoom(state.roomCode)
+    }, 600)
+    return
   }
 
-  broadcastRoom(state.roomCode)
-  setTimeout(() => {
-    nextTurn(state)
+  const pick = pickBossMove(state)
+  if (!pick) {
     broadcastRoom(state.roomCode)
-  }, 800)
+    setTimeout(() => {
+      nextTurn(state)
+      broadcastRoom(state.roomCode)
+    }, 600)
+    return
+  }
+
+  const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMove(state.board, pick.move)
+  state.board = board
+
+  // Update boss HP if the boss piece itself was involved (shouldn't happen, but just in case)
+  const bossPiece = Object.values(state.board.pieces).find(p => p.team === 'boss' && p.isKing)
+  if (state.boss && bossPiece) {
+    state.boss.hp = bossPiece.hp
+  }
+
+  // Record captures (boss doesn't have a player slot, so we just track in state)
+  if (pick.move.capturedPieceIds.length > 0) {
+    // Find any human player slot to attribute captures to boss (for display)
+    // Actually, just update the boss display via state.boss
+  }
+
+  if (promotedToKing) {
+    io.to(state.roomCode).emit('promote', pick.pieceId)
+  }
+
+  // Broadcast power-up collection + effects
+  if (pickedUpPowerUp) {
+    io.to(state.roomCode).emit('powerup:collected', {
+      pieceId: pick.pieceId,
+      powerUp: pickedUpPowerUp,
+      playerName: 'BOSS',
+      effects: appliedEffects,
+    })
+  }
+  for (const eff of appliedEffects) {
+    if (eff.type === 'freeze') io.to(state.roomCode).emit('fx', { type: 'freeze', pieceId: eff.pieceId })
+    else if (eff.type === 'swap' && eff.targetPieceIds) io.to(state.roomCode).emit('fx', { type: 'swap', pieceIds: [eff.pieceId, ...eff.targetPieceIds] })
+    else if (eff.type === 'bomb') io.to(state.roomCode).emit('fx', { type: 'bomb', pieceId: eff.pieceId })
+    else if (eff.type === 'shield') io.to(state.roomCode).emit('fx', { type: 'shield', pieceId: eff.pieceId })
+    else if (eff.type === 'shield_break') io.to(state.roomCode).emit('fx', { type: 'shield_break', pieceId: eff.pieceId })
+  }
+
+  state.version += 1
+  broadcastRoom(state.roomCode)
+
+  // Check winner
+  const winner = checkWinner(state)
+  if (winner) {
+    state.phase = 'ended'
+    state.winnerTeam = winner
+    state.endedAt = Date.now()
+    state.version += 1
+    broadcastRoom(state.roomCode)
+    return
+  }
+
+  // Chain captures: if this was a capture, check for follow-ups
+  const movedPiece = state.board.pieces[pick.pieceId]
+  if (movedPiece && pick.move.kind === 'capture') {
+    const followUps = getLegalMoves(state.board, movedPiece).filter(m => m.kind === 'capture' || m.kind === 'multi_capture')
+    if (followUps.length > 0) {
+      // Continue chain (doesn't consume a move from movesRemaining)
+      setTimeout(() => runBossChainCapture(state, pick.pieceId, movesRemaining, depth + 1), 500)
+      return
+    }
+  }
+
+  // double_move / extra_jump: bonus move (doesn't consume from movesRemaining)
+  if (pickedUpPowerUp === 'double_move' || pickedUpPowerUp === 'extra_jump') {
+    setTimeout(() => runBossMoveRecursive(state, movesRemaining, depth + 1), 500)
+    return
+  }
+
+  // Normal: consume one move
+  const next = movesRemaining - 1
+  if (next > 0) {
+    setTimeout(() => runBossMoveRecursive(state, next, depth + 1), 500)
+  } else {
+    setTimeout(() => {
+      nextTurn(state)
+      broadcastRoom(state.roomCode)
+    }, 600)
+  }
+}
+
+// Boss chain capture helper
+function runBossChainCapture(state: GameState, pieceId: string, movesRemaining: number, depth: number) {
+  if (state.phase !== 'playing') return
+  const piece = state.board.pieces[pieceId]
+  if (!piece) {
+    runBossMoveRecursive(state, movesRemaining, depth + 1)
+    return
+  }
+  const captures = getLegalMoves(state.board, piece).filter(m => m.kind === 'capture' || m.kind === 'multi_capture')
+  if (captures.length === 0) {
+    runBossMoveRecursive(state, movesRemaining, depth + 1)
+    return
+  }
+  // Pick the capture with most captured pieces
+  let best = captures[0]
+  for (const m of captures) {
+    if (m.capturedPieceIds.length > best.capturedPieceIds.length) best = m
+  }
+  const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMove(state.board, best)
+  state.board = board
+  if (promotedToKing) io.to(state.roomCode).emit('promote', pieceId)
+  if (pickedUpPowerUp) {
+    io.to(state.roomCode).emit('powerup:collected', {
+      pieceId, powerUp: pickedUpPowerUp, playerName: 'BOSS', effects: appliedEffects,
+    })
+  }
+  for (const eff of appliedEffects) {
+    if (eff.type === 'freeze') io.to(state.roomCode).emit('fx', { type: 'freeze', pieceId: eff.pieceId })
+    else if (eff.type === 'swap' && eff.targetPieceIds) io.to(state.roomCode).emit('fx', { type: 'swap', pieceIds: [eff.pieceId, ...eff.targetPieceIds] })
+    else if (eff.type === 'bomb') io.to(state.roomCode).emit('fx', { type: 'bomb', pieceId: eff.pieceId })
+    else if (eff.type === 'shield') io.to(state.roomCode).emit('fx', { type: 'shield', pieceId: eff.pieceId })
+  }
+  state.version += 1
+  broadcastRoom(state.roomCode)
+
+  // Check for further chains
+  const movedPiece = state.board.pieces[pieceId]
+  if (movedPiece) {
+    const more = getLegalMoves(state.board, movedPiece).filter(m => m.kind === 'capture' || m.kind === 'multi_capture')
+    if (more.length > 0) {
+      setTimeout(() => runBossChainCapture(state, pieceId, movesRemaining, depth + 1), 500)
+      return
+    }
+  }
+  // Chain done — continue with remaining moves
+  runBossMoveRecursive(state, movesRemaining, depth + 1)
 }
 
 // --- Socket events ---
@@ -647,6 +884,22 @@ io.on('connection', (socket) => {
     }
     state.movesThisTurn += 1
     state.version += 1
+    // Broadcast move details for the move log + animation
+    io.to(state.roomCode).emit('move:made', {
+      pieceId: match.pieceId,
+      fromRow: piece.row, // original position (before move — piece object was already updated)
+      fromCol: piece.col,
+      toRow: match.toRow,
+      toCol: match.toCol,
+      playerName: slot.name,
+      team: slot.team,
+      isBot: !!slot.isBot,
+      kind: match.kind,
+      capturedCount: match.capturedPieceIds.length,
+      abilityUsed: false,
+      pickedUpPowerUp,
+      promotedToKing,
+    })
     broadcastRoom(state.roomCode)
 
     // Check winner immediately after move
@@ -709,38 +962,33 @@ io.on('connection', (socket) => {
     piece.abilityUsed = true
     let pickedUpPowerUp: PowerUpType | undefined
     let promotedToKing = false
+    let appliedEffects: PowerUpEffect[] = []
 
     if (piece.character === 'mage') {
       // Teleport to target tile
       piece.row = targetRow
       piece.col = targetCol
       io.to(state.roomCode).emit('fx', { type: 'teleport', pieceId })
-      // Pick up power-up at destination (if any)
+      // Pick up power-up at destination (if any) — apply directly
       const landCell = state.board.cells[targetRow]?.[targetCol]
       if (landCell && landCell.type === 'powerup' && landCell.powerUp) {
         pickedUpPowerUp = landCell.powerUp
-        // Apply immediate effects using a temp board-like structure
-        const tempBoard = { ...state.board, pieces: state.board.pieces } // same reference
-        const result = applyMove(tempBoard, {
-          pieceId,
-          fromRow: targetRow, fromCol: targetCol,
-          toRow: targetRow, toCol: targetCol,
-          kind: 'special', capturedPieceIds: [], isChainable: false,
-        })
-        state.board = result.board
-        // The above applyMove will move the piece (no-op since same pos) and apply power-up effect
+        // Apply the power-up effect directly to the board state
+        appliedEffects = applyPowerUpEffect(piece, pickedUpPowerUp, state.board.pieces, state.board.cells)
+        // Clear the power-up cell
+        landCell.type = 'normal'
+        landCell.powerUp = undefined
         // Broadcast power-up collection
-        if (pickedUpPowerUp) {
-          io.to(state.roomCode).emit('powerup:collected', {
-            pieceId, powerUp: pickedUpPowerUp, playerName: slot.name, effects: result.appliedEffects,
-          })
-          slot.score += 5
-          for (const eff of result.appliedEffects) {
-            if (eff.type === 'freeze') io.to(state.roomCode).emit('fx', { type: 'freeze', pieceId: eff.pieceId })
-            else if (eff.type === 'swap' && eff.targetPieceIds) io.to(state.roomCode).emit('fx', { type: 'swap', pieceIds: [eff.pieceId, ...eff.targetPieceIds] })
-            else if (eff.type === 'bomb') io.to(state.roomCode).emit('fx', { type: 'bomb', pieceId: eff.pieceId })
-            else if (eff.type === 'shield') io.to(state.roomCode).emit('fx', { type: 'shield', pieceId: eff.pieceId })
-          }
+        io.to(state.roomCode).emit('powerup:collected', {
+          pieceId, powerUp: pickedUpPowerUp, playerName: slot.name, effects: appliedEffects,
+        })
+        slot.score += 5
+        for (const eff of appliedEffects) {
+          if (eff.type === 'freeze') io.to(state.roomCode).emit('fx', { type: 'freeze', pieceId: eff.pieceId })
+          else if (eff.type === 'swap' && eff.targetPieceIds) io.to(state.roomCode).emit('fx', { type: 'swap', pieceIds: [eff.pieceId, ...eff.targetPieceIds] })
+          else if (eff.type === 'bomb') io.to(state.roomCode).emit('fx', { type: 'bomb', pieceId: eff.pieceId })
+          else if (eff.type === 'shield') io.to(state.roomCode).emit('fx', { type: 'shield', pieceId: eff.pieceId })
+          else if (eff.type === 'shield_break') io.to(state.roomCode).emit('fx', { type: 'shield_break', pieceId: eff.pieceId })
         }
       }
       // King promotion check
@@ -780,7 +1028,8 @@ io.on('connection', (socket) => {
         return
       }
     }
-    // Ability use doesn't end turn — player can still move normally after
+    // Ability use doesn't end turn — player can still move normally after.
+    // The turn timer continues; player must make a normal move to end their turn.
   })
 
   socket.on('emote', ({ emoji, targetPieceId }: { emoji: string; targetPieceId?: string }) => {

@@ -16,7 +16,7 @@ const POWERUP_LABEL: Record<PowerUpType, string> = {
 }
 
 export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; targets: { row: number; col: number }[] } | null }) {
-  const { state, selectedPieceId, legalMoves, selectPiece, requestMoves, makeMove, useAbility: triggerAbility, myPlayerId } = useJumbo()
+  const { state, selectedPieceId, legalMoves, selectPiece, requestMoves, makeMove, useAbility: triggerAbility, myPlayerId, lastMove } = useJumbo()
 
   const board = state?.board
   const size = board?.size ?? 8
@@ -95,10 +95,12 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
       const move = moveTargets[`${r}_${c}`]
       const isAbilityTarget = abilityTargetSet.has(`${r}_${c}`)
       const isSelected = piece && piece.id === selectedPieceId
+      // Last move highlight
+      const isLastMoveFrom = lastMove && lastMove.fromRow === r && lastMove.fromCol === c
+      const isLastMoveTo = lastMove && lastMove.toRow === r && lastMove.toCol === c
 
       const isMyPiece = piece && myTeam && piece.team === myTeam
       const canSelect = isMyPiece && state.phase === 'playing'
-      const isCurrentTurn = piece && piece.team === state.currentTurnTeam
 
       cells.push(
         <button
@@ -119,6 +121,10 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
               ? 'inset 0 0 0 3px #ffd23f, 0 0 16px rgba(255,210,63,0.7)'
               : isSelected
               ? 'inset 0 0 0 3px #ffd23f'
+              : isLastMoveFrom
+              ? 'inset 0 0 0 3px rgba(79, 123, 255, 0.5)'
+              : isLastMoveTo
+              ? 'inset 0 0 0 3px rgba(255, 210, 63, 0.7), 0 0 12px rgba(255,210,63,0.4)'
               : cell.tile === 'dark'
               ? 'inset 0 2px 0 rgba(255,255,255,0.1), inset 0 -2px 0 rgba(0,0,0,0.2)'
               : 'inset 0 2px 0 rgba(255,255,255,0.6)',
@@ -158,9 +164,14 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
             </div>
           )}
 
-          {/* Piece */}
+          {/* Piece — uses layout animation for smooth movement */}
           {piece && (
-            <div className="absolute inset-0 flex items-center justify-center p-0.5">
+            <motion.div
+              layout
+              layoutId={`piece-${piece.id}`}
+              className="absolute inset-0 flex items-center justify-center p-0.5"
+              transition={{ type: 'spring', stiffness: 350, damping: 32, mass: 0.8 }}
+            >
               <PieceVisual
                 piece={piece}
                 size={Math.min(40, 38)}
@@ -169,7 +180,7 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
                 isMyTurn={isMyTurn}
                 isMine={piece.team === myTeam}
               />
-            </div>
+            </motion.div>
           )}
 
           {/* Move target */}
