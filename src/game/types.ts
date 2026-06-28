@@ -78,8 +78,10 @@ export interface Move {
 export type GamePhase = 'lobby' | 'starting' | 'playing' | 'ended'
 export type GameMode = 'pvp' | 'coop'
 
+export type BotDifficulty = 'easy' | 'medium' | 'hard' | 'brutal'
+
 export interface PlayerSlot {
-  id: string              // socket id
+  id: string              // socket id (or bot_XXX for bots)
   name: string
   avatar?: string
   team: AnyTeam
@@ -87,6 +89,7 @@ export interface PlayerSlot {
   ready: boolean
   isHost: boolean
   isBot?: boolean
+  botDifficulty?: BotDifficulty
   connected: boolean
   captures: number
   score: number

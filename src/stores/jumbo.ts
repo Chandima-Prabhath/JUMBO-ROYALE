@@ -1,8 +1,9 @@
 // Jumbo Royale - Zustand store
 'use client'
 import { create } from 'zustand'
-import { GameState, Move, PlayerSlot, EmoteEvent, GameMode, ChaosEvent, CharacterClass, AnyTeam } from '@/game/types'
+import { GameState, Move, PlayerSlot, EmoteEvent, GameMode, ChaosEvent, CharacterClass, AnyTeam, BotDifficulty } from '@/game/types'
 import { getSocket } from '@/lib/socket/client'
+import { playSfx } from '@/lib/sound'
 
 interface JumboStore {
   connected: boolean
@@ -24,6 +25,8 @@ interface JumboStore {
   updatePlayer: (data: Partial<Pick<PlayerSlot, 'team' | 'character' | 'ready' | 'name'>>) => void
   startGame: () => void
   restartGame: () => void
+  addBot: (difficulty: BotDifficulty, team?: AnyTeam) => void
+  removeBot: (botId: string) => void
   selectPiece: (pieceId: string | null) => void
   requestMoves: (pieceId: string) => void
   makeMove: (move: Move) => void
@@ -56,15 +59,59 @@ export const useJumbo = create<JumboStore>((set, get) => ({
       set({ connected: false })
     })
     socket.on('state', (state: GameState) => {
+      const prev = get().state
+      // Sound triggers based on state diff
+      if (prev) {
+        // Phase transitions
+        if (prev.phase === 'lobby' && state.phase === 'playing') {
+          playSfx('join')
+        }
+        if (prev.phase === 'playing' && state.phase === 'ended') {
+          const myId = get().myPlayerId
+          const mySlot = state.players.find(p => p.id === myId)
+          if (mySlot && state.winnerTeam === mySlot.team) playSfx('win')
+          else playSfx('lose')
+        }
+        // Turn change → "your turn" ping
+        if (state.phase === 'playing' && prev.currentTurnTeam !== state.currentTurnTeam) {
+          const myId = get().myPlayerId
+          const mySlot = state.players.find(p => p.id === myId)
+          if (mySlot && state.currentTurnTeam === mySlot.team) {
+            playSfx('turn_yours')
+          }
+        }
+        // Captures happened
+        const prevPieceCount = Object.keys(prev.board.pieces).length
+        const newPieceCount = Object.keys(state.board.pieces).length
+        if (newPieceCount < prevPieceCount) {
+          // Was it a multi-capture? Check score increase
+          const captured = prevPieceCount - newPieceCount
+          if (captured >= 2) playSfx('multi_capture')
+          else playSfx('capture')
+        } else if (newPieceCount === prevPieceCount && state.version > prev.version + 0 && state.movesThisTurn > prev.movesThisTurn) {
+          // A move was made (no capture)
+          playSfx('move')
+        }
+        // Boss rage
+        if (state.boss && prev.boss && !prev.boss.rage && state.boss.rage) {
+          playSfx('boss_rage')
+        }
+        // Player count change
+        const prevConnected = prev.players.filter(p => p.connected).length
+        const newConnected = state.players.filter(p => p.connected).length
+        if (newConnected > prevConnected) playSfx('join')
+        else if (newConnected < prevConnected) playSfx('leave')
+      }
       set({ state })
     })
     socket.on('error', (err) => {
       set({ error: err })
+      playSfx('error')
       // auto-clear after 4s
       setTimeout(() => set({ error: null }), 4000)
     })
-    socket.on('room:created', ({ roomCode }) => set({ roomId: roomCode }))
-    socket.on('room:joined', ({ roomCode }) => set({ roomId: roomCode }))
+    socket.on('room:created', ({ roomCode }) => { set({ roomId: roomCode }); playSfx('click') })
+    socket.on('room:joined', ({ roomCode }) => { set({ roomId: roomCode }); playSfx('click') })
     socket.on('move:list', ({ pieceId, moves }) => {
       if (get().selectedPieceId === pieceId) {
         set({ legalMoves: moves })
@@ -72,26 +119,36 @@ export const useJumbo = create<JumboStore>((set, get) => ({
     })
     socket.on('chain:available', ({ pieceId, moves }) => {
       set({ selectedPieceId: pieceId, legalMoves: moves })
+      playSfx('select')
     })
     socket.on('emote', (ev: EmoteEvent) => {
       set(s => ({ lastEmotes: [...s.lastEmotes.slice(-30), ev] }))
+      playSfx('emote')
     })
     socket.on('chat', (msg) => {
       set(s => ({ chatMessages: [...s.chatMessages.slice(-100), msg] }))
+      playSfx('chat')
     })
     socket.on('chaos', (event: ChaosEvent) => {
       set({ pendingChaos: event })
+      playSfx('chaos')
       setTimeout(() => set({ pendingChaos: null }), 4000)
     })
     socket.on('fx', (fx) => {
       const id = `${Date.now()}_${Math.random()}`
       set(s => ({ fxQueue: [...s.fxQueue, { ...fx, id }] }))
+      // Play sound matching fx type
+      if (fx.type === 'teleport') playSfx('teleport')
+      else if (fx.type === 'swap') playSfx('swap')
       setTimeout(() => {
         set(s => ({ fxQueue: s.fxQueue.filter(f => f.id !== id) }))
       }, 1200)
     })
     socket.on('boss-rage', () => {
-      // visual handled via state.boss.rage
+      playSfx('boss_rage')
+    })
+    socket.on('promote', () => {
+      playSfx('king')
     })
   },
 
@@ -120,8 +177,21 @@ export const useJumbo = create<JumboStore>((set, get) => ({
     socket.emit('game:restart')
   },
 
+  addBot: (difficulty, team) => {
+    const socket = getSocket()
+    socket.emit('bot:add', { difficulty, team })
+    playSfx('click')
+  },
+
+  removeBot: (botId) => {
+    const socket = getSocket()
+    socket.emit('bot:remove', { botId })
+    playSfx('click')
+  },
+
   selectPiece: (pieceId) => {
     set({ selectedPieceId: pieceId, legalMoves: [] })
+    if (pieceId) playSfx('select')
   },
 
   requestMoves: (pieceId) => {

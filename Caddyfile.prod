@@ -1,0 +1,51 @@
+# ===========================================================================
+# Jumbo Royale - Production Caddyfile
+# Routes traffic from a single port to both the Next.js web app and the
+# Socket.IO game service. The XTransformPort query differentiates them.
+# ===========================================================================
+
+# Replace :80 with your domain name to get automatic HTTPS via Let's Encrypt.
+# Example: jumbo.example.com {
+:80 {
+	# Route Socket.IO traffic (identified by XTransformPort query) to the game service
+	@transform_port_query {
+		query XTransformPort=*
+	}
+	handle @transform_port_query {
+		reverse_proxy game-service:{query.XTransformPort} {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# Everything else goes to the Next.js app
+	handle {
+		reverse_proxy web:3000 {
+			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# Socket.IO-specific: allow websocket upgrades
+	@websockets {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	handle @websockets {
+		reverse_proxy game-service:3003
+	}
+
+	# Compression
+	encode gzip zstd
+
+	# Basic security headers
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}

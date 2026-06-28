@@ -1,12 +1,20 @@
 'use client'
 import { useJumbo } from '@/stores/jumbo'
-import { CharacterClass, AnyTeam } from '@/game/types'
+import { CharacterClass, AnyTeam, BotDifficulty } from '@/game/types'
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
+import { SoundToggle } from '@/components/game/SoundToggle'
 import { toast } from 'sonner'
+
+const BOT_DIFFICULTIES: { id: BotDifficulty; label: string; emoji: string; desc: string }[] = [
+  { id: 'easy', label: 'Easy', emoji: '🌱', desc: 'Casual, makes mistakes' },
+  { id: 'medium', label: 'Medium', emoji: '⚔️', desc: 'Solid play, thinks ahead' },
+  { id: 'hard', label: 'Hard', emoji: '🔥', desc: 'Deep minimax, tough opponent' },
+  { id: 'brutal', label: 'Brutal', emoji: '💀', desc: 'Plays optimally, no mercy' },
+]
 
 const CHARACTERS: { id: CharacterClass; name: string; emoji: string; desc: string }[] = [
   { id: 'tank', name: 'Tank', emoji: '🛡️', desc: '2 HP, starts with shield. Slow but tough.' },
@@ -72,18 +80,21 @@ export function LobbyScreen() {
               Room: <span className="font-mono font-bold text-jumbo-yellow">{state.roomCode}</span> · Mode: {state.mode === 'pvp' ? '⚔️ PvP Chaos' : '🤝 Co-op vs Boss'}
             </p>
           </div>
-          <div className="flex flex-col items-end">
-            <div className="text-xs text-muted-foreground">Share code</div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                navigator.clipboard?.writeText(state.roomCode)
-                toast.success('Room code copied!')
-              }}
-            >
-              📋 {state.roomCode}
-            </Button>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex gap-1">
+              <SoundToggle />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  navigator.clipboard?.writeText(state.roomCode)
+                  toast.success('Room code copied!')
+                }}
+              >
+                📋 {state.roomCode}
+              </Button>
+            </div>
+            <div className="text-xs text-muted-foreground">Tap code to copy</div>
           </div>
         </div>
       </header>
@@ -109,22 +120,60 @@ export function LobbyScreen() {
                 key={p.id}
                 className={`p-3 rounded-xl border-2 flex items-center gap-3 ${
                   p.id === myPlayerId ? 'border-jumbo-yellow bg-yellow-50' : 'border-border'
-                } ${!p.connected ? 'opacity-40' : ''}`}
+                } ${!p.connected ? 'opacity-40' : ''} ${p.isBot ? 'bg-purple-50 border-purple-200' : ''}`}
               >
                 <div className="text-2xl">{p.avatar}</div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1">
                     <span className="font-bold truncate">{p.name}</span>
                     {p.isHost && <span className="text-xs">👑</span>}
+                    {p.isBot && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-purple-200 text-purple-900 font-bold">
+                        🤖 {p.botDifficulty?.toUpperCase()}
+                      </span>
+                    )}
                     {p.ready && <span className="text-jumbo-green text-sm">✓ Ready</span>}
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {p.team === 'red' ? '🔴 Red' : p.team === 'blue' ? '🔵 Blue' : '🟣 Boss'} · {CHARACTERS.find(c => c.id === p.character)?.emoji} {CHARACTERS.find(c => c.id === p.character)?.name}
                   </div>
                 </div>
+                {p.isBot && isHost && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => useJumbo.getState().removeBot(p.id)}
+                    className="text-jumbo-red hover:bg-red-50 px-2"
+                    aria-label={`Remove ${p.name}`}
+                  >
+                    ✕
+                  </Button>
+                )}
               </div>
             ))}
           </div>
+
+          {/* Add bot panel (host only, lobby only) */}
+          {isHost && connectedPlayers.length < 6 && (
+            <div className="mt-3 p-3 rounded-xl border-2 border-dashed border-purple-200 bg-purple-50/50">
+              <div className="text-sm font-bold mb-2">🤖 Add a bot player</div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {BOT_DIFFICULTIES.map(d => (
+                  <button
+                    key={d.id}
+                    onClick={() => useJumbo.getState().addBot(d.id)}
+                    className="p-2 rounded-lg border-2 border-purple-200 bg-white hover:border-purple-400 hover:bg-purple-50 transition-all text-left"
+                  >
+                    <div className="flex items-center gap-1 mb-0.5">
+                      <span className="text-lg">{d.emoji}</span>
+                      <span className="font-bold text-sm">{d.label}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-tight">{d.desc}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </Card>
 
         {/* Setup grid */}

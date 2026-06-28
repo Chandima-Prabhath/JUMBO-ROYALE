@@ -33,9 +33,7 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
   if (!state) return null
 
   const mySlot = state.players.find(p => p.id === myPlayerId)
-  const isMyTurn = state.mode === 'pvp'
-    ? state.players[state.currentPlayerIndex]?.id === myPlayerId
-    : state.currentTurnTeam === 'red' && mySlot?.team === 'red'
+  const isMyTurn = state.players[state.currentPlayerIndex]?.id === myPlayerId && state.currentTurnTeam === mySlot?.team
   const selectedPiece = selectedPieceId ? state.board.pieces[selectedPieceId] : null
   const canUseSelectedAbility = selectedPiece && canUseAbility(selectedPiece) && isMyTurn && selectedPiece.team === mySlot?.team
   const abilityTargets = canUseSelectedAbility ? getAbilityTargets(state.board, selectedPiece) : []

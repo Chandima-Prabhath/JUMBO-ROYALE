@@ -58,7 +58,7 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
   const myTeam = mySlot?.team
   const isMyTurn = state.mode === 'pvp'
     ? state.players[state.currentPlayerIndex]?.id === myPlayerId
-    : state.currentTurnTeam === 'red' && myTeam === 'red'
+    : state.currentTurnTeam === 'red' && myTeam === 'red' && state.players[state.currentPlayerIndex]?.id === myPlayerId
 
   const handleCellClick = (row: number, col: number) => {
     const piece = pieceByPos[`${row}_${col}`]
@@ -80,10 +80,10 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
     if (piece) {
       // Ignore clicks on opponent pieces entirely (better UX)
       const isMyPiece = piece.team === myTeam
-      const isMyTurn = state.mode === 'pvp'
+      const canSelectNow = state.mode === 'pvp'
         ? state.players[state.currentPlayerIndex]?.id === myPlayerId
-        : state.currentTurnTeam === 'red' && myTeam === 'red'
-      if (!isMyPiece || !isMyTurn) {
+        : state.currentTurnTeam === 'red' && myTeam === 'red' && state.players[state.currentPlayerIndex]?.id === myPlayerId
+      if (!isMyPiece || !canSelectNow) {
         // Just deselect
         selectPiece(null)
         return

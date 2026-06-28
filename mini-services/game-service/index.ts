@@ -4,11 +4,15 @@ import { Server } from 'socket.io'
 import { v4 as uuid } from 'uuid'
 import {
   GameState, GameMode, PlayerSlot, AnyTeam, CharacterClass,
-  Move, EmoteEvent, Piece,
+  Move, EmoteEvent, Piece, BotDifficulty,
 } from '../../src/game/types'
 import { createBoard, BOARD_SIZE, TURN_DURATION_SEC, MAX_MOVES_PER_TURN, CHAOS_INTERVAL_SEC } from '../../src/game/board'
 import { getLegalMoves, applyMove, getTeamMoves, getAbilityTargets } from '../../src/game/engine'
 import { checkWinner, applyChaos, rollChaosEvent, pickBossMove, bossSummon } from '../../src/game/rules'
+import { pickBestMove, shouldUseAbility } from '../../src/game/ai'
+
+// Configurable port (env override for self-hosting)
+const PORT = parseInt(process.env.GAME_SERVICE_PORT || process.env.PORT || '3003', 10)
 
 const httpServer = createServer()
 const io = new Server(httpServer, {
@@ -38,6 +42,28 @@ function makePlayerSlot(socketId: string, name: string, isHost: boolean): Player
     character: 'tank',
     ready: false,
     isHost,
+    connected: true,
+    captures: 0,
+    score: 0,
+  }
+}
+
+const BOT_NAMES = ['RoboRex', 'ByteBot', 'AlphaQ', 'TurboTux', 'Megatron', 'CyberCat', 'PixelPaw', 'Glitchy', 'NexaBot', 'QuirkBot']
+const BOT_AVATARS = ['🤖', '👾', '🎮', '🛸', '⚙️', '🔮', '🦾', '💾']
+
+function makeBotSlot(difficulty: BotDifficulty, team: AnyTeam): PlayerSlot {
+  const nameIdx = Math.floor(Math.random() * BOT_NAMES.length)
+  const diffTag = difficulty === 'easy' ? '₀₁' : difficulty === 'medium' ? '₀₂' : difficulty === 'hard' ? '₀₃' : '₀₄'
+  return {
+    id: `bot_${uuid().slice(0, 8)}`,
+    name: `${BOT_NAMES[nameIdx]}${diffTag}`,
+    avatar: BOT_AVATARS[Math.floor(Math.random() * BOT_AVATARS.length)],
+    team,
+    character: ['tank', 'speedster', 'mage', 'jester'][Math.floor(Math.random() * 4)] as CharacterClass,
+    ready: true,
+    isHost: false,
+    isBot: true,
+    botDifficulty: difficulty,
     connected: true,
     captures: 0,
     score: 0,
@@ -107,6 +133,9 @@ function startGame(state: GameState) {
     }
   }
   state.version += 1
+
+  // If the first player is a bot, schedule their move
+  scheduleBotTurnIfApplicable(state)
 }
 
 function nextTurn(state: GameState) {
@@ -141,8 +170,16 @@ function nextTurn(state: GameState) {
       setTimeout(() => runBossTurn(state), 1200)
     } else {
       state.currentTurnTeam = 'red'
-      const idx = state.players.findIndex(p => p.team === 'red' && p.connected)
-      state.currentPlayerIndex = idx >= 0 ? idx : state.currentPlayerIndex
+      // Cycle to NEXT red player (so each red player gets a turn)
+      const redPlayers = state.players
+        .map((p, i) => ({ p, i }))
+        .filter(({ p }) => p.team === 'red' && p.connected)
+      if (redPlayers.length > 0) {
+        // Find current index in redPlayers; advance by 1
+        const currentRedIdx = redPlayers.findIndex(({ i }) => i === state.currentPlayerIndex)
+        const nextRedIdx = (currentRedIdx + 1) % redPlayers.length
+        state.currentPlayerIndex = redPlayers[nextRedIdx].i
+      }
     }
   }
   state.turnStartedAt = Date.now()
@@ -157,6 +194,162 @@ function nextTurn(state: GameState) {
     io.to(state.roomCode).emit('chaos', event)
   }
   state.version += 1
+
+  // If new current player is a bot, schedule their turn
+  scheduleBotTurnIfApplicable(state)
+}
+
+// Schedule a bot move if the current player is a bot
+function scheduleBotTurnIfApplicable(state: GameState) {
+  if (state.phase !== 'playing') return
+  if (state.mode === 'coop' && state.currentTurnTeam === 'boss') return // boss has own scheduler
+  const slot = state.players[state.currentPlayerIndex]
+  if (!slot?.isBot || !slot.connected) return
+  const difficulty = slot.botDifficulty || 'hard'
+  // Faster thinking for easy bots, slower for brutal (feels more deliberate)
+  const thinkTime = difficulty === 'easy' ? 600 : difficulty === 'medium' ? 900 : difficulty === 'hard' ? 1200 : 1500
+  setTimeout(() => runBotMove(state, slot.id), thinkTime + Math.random() * 400)
+}
+
+// Bot move executor — runs server-side, applies move directly
+function runBotMove(state: GameState, botPlayerId: string) {
+  if (state.phase !== 'playing') return
+  const slot = state.players.find(p => p.id === botPlayerId)
+  if (!slot?.isBot || !slot.connected) return
+  // Make sure it's still their turn
+  if (state.players[state.currentPlayerIndex]?.id !== botPlayerId) return
+
+  const difficulty = slot.botDifficulty || 'hard'
+  const team = slot.team
+
+  // First, consider using an ability (mage teleport / jester swap) if beneficial
+  // Find a piece with an unused ability
+  const teamPieces = Object.values(state.board.pieces).filter(p => p.team === team && !p.abilityUsed && p.frozenTurns === 0)
+  for (const piece of teamPieces) {
+    if (piece.character !== 'mage' && piece.character !== 'jester') continue
+    const decision = shouldUseAbility(state, piece, team, difficulty)
+    if (decision.shouldUse && decision.targetRow !== undefined && decision.targetCol !== undefined) {
+      // Execute ability directly
+      piece.abilityUsed = true
+      if (piece.character === 'mage') {
+        piece.row = decision.targetRow
+        piece.col = decision.targetCol
+        io.to(state.roomCode).emit('fx', { type: 'teleport', pieceId: piece.id })
+      } else if (piece.character === 'jester') {
+        const other = Object.values(state.board.pieces).find(p => p.row === decision.targetRow && p.col === decision.targetCol && p.id !== piece.id)
+        if (other) {
+          const tr = piece.row, tc = piece.col
+          piece.row = decision.targetRow
+          piece.col = decision.targetCol
+          other.row = tr
+          other.col = tc
+          io.to(state.roomCode).emit('fx', { type: 'swap', pieceIds: [piece.id, other.id] })
+        }
+      }
+      state.version += 1
+      broadcastRoom(state.roomCode)
+      // After ability, still make a move
+      setTimeout(() => runBotMove(state, botPlayerId), 600)
+      return
+    }
+  }
+
+  // Pick best move via minimax
+  const best = pickBestMove(state, team, difficulty)
+  if (!best) {
+    // No moves — end turn
+    nextTurn(state)
+    broadcastRoom(state.roomCode)
+    return
+  }
+
+  // Apply the move
+  const { board, promotedToKing } = applyMove(state.board, best.move)
+  state.board = board
+  if (best.move.capturedPieceIds.length > 0) {
+    slot.captures += best.move.capturedPieceIds.length
+    slot.score += best.move.capturedPieceIds.length * 10
+    if (best.move.capturedPieceIds.length > 1) slot.score += 20
+  }
+  if (promotedToKing) {
+    io.to(state.roomCode).emit('promote', best.pieceId)
+  }
+  state.movesThisTurn += 1
+  state.version += 1
+  broadcastRoom(state.roomCode)
+
+  // Check winner
+  const winner = checkWinner(state)
+  if (winner) {
+    state.phase = 'ended'
+    state.winnerTeam = winner
+    state.endedAt = Date.now()
+    state.version += 1
+    broadcastRoom(state.roomCode)
+    return
+  }
+
+  // Check for chain captures
+  const movedPiece = state.board.pieces[best.pieceId]
+  if (movedPiece && best.move.kind === 'capture') {
+    const followUps = getLegalMoves(state.board, movedPiece).filter(m => m.kind === 'capture' || m.kind === 'multi_capture')
+    if (followUps.length > 0) {
+      // Continue chain with another bot move (faster)
+      setTimeout(() => runBotChainCapture(state, botPlayerId, movedPiece.id), 500)
+      return
+    }
+  }
+
+  // End turn after a short pause
+  setTimeout(() => {
+    nextTurn(state)
+    broadcastRoom(state.roomCode)
+  }, 400)
+}
+
+// Bot chain capture — pick best follow-up move for a specific piece
+function runBotChainCapture(state: GameState, botPlayerId: string, pieceId: string) {
+  if (state.phase !== 'playing') return
+  const slot = state.players.find(p => p.id === botPlayerId)
+  if (!slot?.isBot) return
+  const piece = state.board.pieces[pieceId]
+  if (!piece) {
+    nextTurn(state)
+    broadcastRoom(state.roomCode)
+    return
+  }
+  const captures = getLegalMoves(state.board, piece).filter(m => m.kind === 'capture' || m.kind === 'multi_capture')
+  if (captures.length === 0) {
+    nextTurn(state)
+    broadcastRoom(state.roomCode)
+    return
+  }
+  // Pick the capture with most captured pieces (greedy for chains)
+  let best = captures[0]
+  for (const m of captures) {
+    if (m.capturedPieceIds.length > best.capturedPieceIds.length) best = m
+  }
+  const { board, promotedToKing } = applyMove(state.board, best)
+  state.board = board
+  slot.captures += best.capturedPieceIds.length
+  slot.score += best.capturedPieceIds.length * 10
+  if (promotedToKing) io.to(state.roomCode).emit('promote', pieceId)
+  state.version += 1
+  broadcastRoom(state.roomCode)
+
+  // Check for further chains
+  const movedPiece = state.board.pieces[pieceId]
+  if (movedPiece) {
+    const more = getLegalMoves(state.board, movedPiece).filter(m => m.kind === 'capture' || m.kind === 'multi_capture')
+    if (more.length > 0) {
+      setTimeout(() => runBotChainCapture(state, botPlayerId, pieceId), 500)
+      return
+    }
+  }
+  setTimeout(() => {
+    nextTurn(state)
+    broadcastRoom(state.roomCode)
+  }, 400)
 }
 
 function runBossTurn(state: GameState) {
@@ -289,15 +482,68 @@ io.on('connection', (socket) => {
       return
     }
     if (state.players.filter(p => p.connected).length < 2) {
-      socket.emit('error', { code: 'NEED_PLAYERS', message: 'Need at least 2 players' })
-      return
-    }
-    if (state.mode === 'coop' && state.players.filter(p => p.connected).length < 2) {
-      socket.emit('error', { code: 'NEED_PLAYERS', message: 'Co-op needs at least 2 humans' })
+      socket.emit('error', { code: 'NEED_PLAYERS', message: 'Need at least 2 players (add a bot!)' })
       return
     }
     startGame(state)
     broadcastRoom(meta.roomCode)
+  })
+
+  socket.on('bot:add', ({ difficulty, team }: { difficulty: BotDifficulty; team?: AnyTeam }) => {
+    const meta = socketToRoom.get(socket.id)
+    if (!meta) return
+    const state = rooms.get(meta.roomCode)
+    if (!state) return
+    const slot = state.players.find(p => p.id === socket.id)
+    if (!slot?.isHost) {
+      socket.emit('error', { code: 'NOT_HOST', message: 'Only host can add bots' })
+      return
+    }
+    if (state.phase !== 'lobby') {
+      socket.emit('error', { code: 'GAME_STARTED', message: 'Game already started' })
+      return
+    }
+    if (state.players.length >= 6) {
+      socket.emit('error', { code: 'ROOM_FULL', message: 'Room is full (max 6)' })
+      return
+    }
+    // Pick team: if specified, use it; else pick team with fewer players
+    let botTeam: AnyTeam
+    if (team) {
+      botTeam = team
+    } else if (state.mode === 'coop') {
+      botTeam = 'red'
+    } else {
+      const redCount = state.players.filter(p => p.team === 'red').length
+      const blueCount = state.players.filter(p => p.team === 'blue').length
+      botTeam = redCount <= blueCount ? 'red' : 'blue'
+    }
+    // Team balance check for PvP
+    if (state.mode === 'pvp') {
+      const teamCount = state.players.filter(p => p.team === botTeam).length
+      if (teamCount >= 3) {
+        socket.emit('error', { code: 'TEAM_FULL', message: 'Team is full' })
+        return
+      }
+    }
+    const botSlot = makeBotSlot(difficulty, botTeam)
+    state.players.push(botSlot)
+    broadcastRoom(meta.roomCode)
+  })
+
+  socket.on('bot:remove', ({ botId }: { botId: string }) => {
+    const meta = socketToRoom.get(socket.id)
+    if (!meta) return
+    const state = rooms.get(meta.roomCode)
+    if (!state) return
+    const slot = state.players.find(p => p.id === socket.id)
+    if (!slot?.isHost) return
+    if (state.phase !== 'lobby') return
+    const idx = state.players.findIndex(p => p.id === botId && p.isBot)
+    if (idx >= 0) {
+      state.players.splice(idx, 1)
+      broadcastRoom(meta.roomCode)
+    }
   })
 
   socket.on('move:list', ({ pieceId }: { pieceId: string }) => {
@@ -317,14 +563,9 @@ io.on('connection', (socket) => {
     const state = rooms.get(meta.roomCode)
     if (!state || state.phase !== 'playing') return
     // It's the player's turn?
-    if (state.mode === 'pvp') {
-      const slot = state.players[state.currentPlayerIndex]
-      if (!slot || slot.id !== socket.id) {
-        socket.emit('error', { code: 'NOT_YOUR_TURN', message: 'Not your turn' })
-        return
-      }
-    } else if (state.currentTurnTeam !== 'red') {
-      socket.emit('error', { code: 'NOT_YOUR_TURN', message: "Boss's turn" })
+    const currentSlot = state.players[state.currentPlayerIndex]
+    if (!currentSlot || currentSlot.id !== socket.id) {
+      socket.emit('error', { code: 'NOT_YOUR_TURN', message: 'Not your turn' })
       return
     }
     const piece = state.board.pieces[move.pieceId]
@@ -398,10 +639,8 @@ io.on('connection', (socket) => {
     if (!meta) return
     const state = rooms.get(meta.roomCode)
     if (!state || state.phase !== 'playing') return
-    if (state.mode === 'pvp') {
-      const slot = state.players[state.currentPlayerIndex]
-      if (!slot || slot.id !== socket.id) return
-    } else if (state.currentTurnTeam !== 'red') return
+    const currentSlot = state.players[state.currentPlayerIndex]
+    if (!currentSlot || currentSlot.id !== socket.id) return
     const piece = state.board.pieces[pieceId]
     if (!piece) return
     const slot = state.players.find(p => p.id === socket.id)
@@ -519,7 +758,6 @@ io.on('connection', (socket) => {
   })
 })
 
-const PORT = 3003
 httpServer.listen(PORT, () => {
   console.log(`[jumbo-royale] game server running on port ${PORT}`)
 })

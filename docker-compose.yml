@@ -1,0 +1,58 @@
+# ===========================================================================
+# Jumbo Royale - Docker Compose
+# One-command self-host: `docker compose up -d`
+# Accessible at http://localhost (port 80) or http://localhost:3000 directly.
+# ===========================================================================
+
+services:
+  # Reverse proxy that routes / to Next.js and the Socket.IO path to the game service
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"  # Caddy auto-TLS if you have a domain
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+      - game-service
+    restart: unless-stopped
+
+  # Next.js web app
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["bun", ".next/standalone/server.js"]
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=file:/app/data/jumbo.db
+      # Client-side: tell browser to use same origin (Caddy proxies / to web, /?XTransformPort=3003 to game-service)
+      - NEXT_PUBLIC_USE_GATEWAY_QUERY=true
+    volumes:
+      - web_data:/app/data
+    expose:
+      - "3000"
+    restart: unless-stopped
+
+  # Socket.IO game service
+  game-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app/mini-services/game-service
+    command: ["bun", "index.ts"]
+    environment:
+      - NODE_ENV=production
+      - GAME_SERVICE_PORT=3003
+    expose:
+      - "3003"
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
+  web_data:

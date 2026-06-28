@@ -11,6 +11,7 @@ import { GameMode } from '@/game/types'
 import { GameBoard } from '@/components/game/GameBoard'
 import { GameHUD } from '@/components/game/GameHUD'
 import { LobbyScreen } from '@/components/game/LobbyScreen'
+import { SoundToggle } from '@/components/game/SoundToggle'
 import { toast } from 'sonner'
 
 type ScreenName = 'home' | 'lobby' | 'game' | 'ended'
@@ -90,6 +91,7 @@ export default function Home() {
             <Button variant="outline" size="sm" onClick={() => { window.location.reload() }}>
               🏠 Leave
             </Button>
+            <SoundToggle />
           </div>
         </header>
         <main className="flex-1 px-3 pb-4 max-w-2xl w-full mx-auto flex flex-col gap-2">
@@ -156,6 +158,9 @@ export default function Home() {
   // Home screen
   return (
     <div className="min-h-screen flex flex-col">
+      <div className="absolute top-3 right-3 z-10">
+        <SoundToggle />
+      </div>
       <header className="px-4 pt-6 pb-2 text-center">
         <motion.div
           initial={{ scale: 0.5, opacity: 0 }}
