@@ -31,7 +31,10 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
-.env*
+.env
+.env.local
+.env.*.local
+# NOTE: .env.example IS committed (it documents the env vars)
 
 # vercel
 .vercel
@@ -52,3 +55,16 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# Jumbo Royale additions
+/db/*.db
+/db/*.db-journal
+/data/
+/download/
+/tmp/
+/.zscripts/
+/worklog.md
+
+# Docker volumes
+caddy_data/
+caddy_config/
