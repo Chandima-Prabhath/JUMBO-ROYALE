@@ -1,7 +1,7 @@
 // Jumbo Royale - Zustand store
 'use client'
 import { create } from 'zustand'
-import { GameState, Move, PlayerSlot, EmoteEvent, GameMode, ChaosEvent, CharacterClass, AnyTeam, BotDifficulty } from '@/game/types'
+import { GameState, Move, PlayerSlot, EmoteEvent, GameMode, ChaosEvent, CharacterClass, AnyTeam, BotDifficulty, PowerUpType } from '@/game/types'
 import { getSocket } from '@/lib/socket/client'
 import { playSfx } from '@/lib/sound'
 
@@ -17,6 +17,8 @@ interface JumboStore {
   lastEmotes: EmoteEvent[]
   chatMessages: { playerId: string; name: string; avatar?: string; text: string; timestamp: number }[]
   fxQueue: { id: string; type: string; pieceId?: string; pieceIds?: string[] }[]
+  powerupCollected: { id: string; playerName: string; powerUp: PowerUpType; effects: any[]; timestamp: number } | null
+  bonusMove: { pieceId: string; powerUp: PowerUpType } | null
 
   // actions
   init: () => void
@@ -48,6 +50,8 @@ export const useJumbo = create<JumboStore>((set, get) => ({
   lastEmotes: [],
   chatMessages: [],
   fxQueue: [],
+  powerupCollected: null,
+  bonusMove: null,
 
   init: () => {
     if (get().connected) return
@@ -140,6 +144,10 @@ export const useJumbo = create<JumboStore>((set, get) => ({
       // Play sound matching fx type
       if (fx.type === 'teleport') playSfx('teleport')
       else if (fx.type === 'swap') playSfx('swap')
+      else if (fx.type === 'freeze') playSfx('freeze')
+      else if (fx.type === 'bomb') playSfx('capture')
+      else if (fx.type === 'shield') playSfx('powerup')
+      else if (fx.type === 'shield_break') playSfx('capture')
       setTimeout(() => {
         set(s => ({ fxQueue: s.fxQueue.filter(f => f.id !== id) }))
       }, 1200)
@@ -149,6 +157,33 @@ export const useJumbo = create<JumboStore>((set, get) => ({
     })
     socket.on('promote', () => {
       playSfx('king')
+    })
+    socket.on('powerup:collected', (data: { pieceId: string; powerUp: PowerUpType; playerName: string; effects: any[] }) => {
+      const id = `${Date.now()}_${Math.random()}`
+      set({
+        powerupCollected: {
+          id,
+          playerName: data.playerName,
+          powerUp: data.powerUp,
+          effects: data.effects || [],
+          timestamp: Date.now(),
+        },
+      })
+      playSfx('powerup')
+      // Auto-clear after 2.5s
+      setTimeout(() => {
+        const cur = get().powerupCollected
+        if (cur && cur.id === id) set({ powerupCollected: null })
+      }, 2500)
+    })
+    socket.on('bonus_move', (data: { pieceId: string; powerUp: PowerUpType }) => {
+      set({ bonusMove: data })
+      playSfx('powerup')
+      // Clear bonus move banner after 3s
+      setTimeout(() => {
+        const cur = get().bonusMove
+        if (cur && cur.pieceId === data.pieceId) set({ bonusMove: null })
+      }, 3000)
     })
   },
 

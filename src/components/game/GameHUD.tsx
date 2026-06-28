@@ -7,6 +7,7 @@ import { canUseAbility, getAbilityTargets } from '@/game/engine'
 import { PieceVisual } from './PieceVisual'
 import { AnimalAvatar, Sparkle } from './assets'
 import { Tooltip } from './Tooltip'
+import { PowerUpLegend, CharacterCodex, CHARACTER_INFO, POWERUP_INFO } from './Codex'
 import { Piece, ChaosEvent } from '@/game/types'
 
 const EMOJI_WHEEL = ['😂', '🔥', '💀', '🎉', '👏', '😭', '🤔', '👀', '❤️', '🤯', '🥳', '😤']
@@ -26,6 +27,7 @@ function formatTime(ms: number) {
 export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: { pieceId: string; targets: { row: number; col: number }[] } | null) => void }) {
   const { state, myPlayerId, selectedPieceId, legalMoves, useAbility, sendEmote, lastEmotes, pendingChaos } = useJumbo()
   const [emoteOpen, setEmoteOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
   const [now, setNow] = useState(Date.now())
   const [abilityMode, setAbilityMode] = useState<{ pieceId: string; targets: { row: number; col: number }[] } | null>(null)
   const prevTurnKeyRef = useRef<string>('')
@@ -456,6 +458,88 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
           {emoteOpen ? '✕' : '😜'}
         </motion.button>
       </div>
+
+      {/* ===== Help button (top-left, fixed) ===== */}
+      <div className="fixed top-3 left-3 z-[70]">
+        <Tooltip content="Game guide — characters, power-ups, controls" side="right">
+          <motion.button
+            whileTap={{ scale: 0.9 }}
+            whileHover={{ scale: 1.05 }}
+            onClick={() => setHelpOpen(o => !o)}
+            className="w-12 h-12 rounded-full flex items-center justify-center text-2xl"
+            style={{
+              background: 'linear-gradient(135deg, #4f7bff, #2848a8)',
+              border: '3px solid #1a0d2e',
+              boxShadow: '0 4px 0 #1a2f6b, 0 6px 12px rgba(0,0,0,0.3)',
+            }}
+            aria-label="Open game guide"
+          >
+            ?
+          </motion.button>
+        </Tooltip>
+      </div>
+
+      {/* ===== Help modal ===== */}
+      <AnimatePresence>
+        {helpOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[90] flex items-center justify-center p-4"
+            style={{ background: 'rgba(26,13,46,0.7)', backdropFilter: 'blur(4px)' }}
+            onClick={() => setHelpOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              onClick={e => e.stopPropagation()}
+              className="max-w-2xl w-full max-h-[85vh] overflow-y-auto rounded-2xl p-4"
+              style={{
+                background: 'linear-gradient(135deg, #fff8ef, #ffe1ef)',
+                border: '4px solid #1a0d2e',
+                boxShadow: '0 12px 0 #0a0418, 0 20px 40px rgba(0,0,0,0.4)',
+              }}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-xl font-bold text-jumbo-purple">📖 Game Guide</h2>
+                <button onClick={() => setHelpOpen(false)} className="text-2xl w-8 h-8 rounded-full bg-muted hover:bg-muted/70">✕</button>
+              </div>
+
+              {/* Quick controls */}
+              <div className="mb-3 p-3 rounded-xl bg-white/70 border-2 border-jumbo-yellow">
+                <div className="font-bold text-sm mb-1 text-jumbo-purple">🎮 Controls</div>
+                <ul className="text-xs space-y-1 text-muted-foreground">
+                  <li>• <b>Tap your piece</b> to see its possible moves (green dots)</li>
+                  <li>• <b>Tap a green tile</b> to move there</li>
+                  <li>• <b>Jump over enemies</b> to capture them — chain jumps for combos!</li>
+                  <li>• <b>Reach the far row</b> to promote to a King 👑 (moves both directions)</li>
+                  <li>• <b>Tap ⚡ Ability</b> (if available) to use your character's special power</li>
+                  <li>• <b>Tap 🎁 power-ups</b> on the board by moving onto them — effects apply automatically</li>
+                  <li>• <b>Tap 😜</b> for the emote wheel</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <CharacterCodex defaultOpen team={mySlot?.team || 'red'} />
+                <PowerUpLegend defaultOpen />
+              </div>
+
+              <div className="mt-3 p-3 rounded-xl bg-white/70 border-2 border-jumbo-pink">
+                <div className="font-bold text-sm mb-1 text-jumbo-purple">💡 Tips</div>
+                <ul className="text-xs space-y-1 text-muted-foreground">
+                  <li>• Captures are <b>forced</b> — if you can capture, you must.</li>
+                  <li>• Tanks have 2 HP + a shield that absorbs 1 capture.</li>
+                  <li>• Mages can teleport once per game — save it for a clutch escape or to grab a power-up.</li>
+                  <li>• Jesters can swap with anyone — use it to escape danger or trap an enemy.</li>
+                  <li>• Every 60s a chaos event triggers — adapt fast!</li>
+                </ul>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

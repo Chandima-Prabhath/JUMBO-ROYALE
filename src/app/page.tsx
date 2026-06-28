@@ -13,6 +13,7 @@ import { LobbyScreen } from '@/components/game/LobbyScreen'
 import { SoundToggle } from '@/components/game/SoundToggle'
 import { AnimalAvatar, TankFace, SpeedsterFace, MageFace, JesterFace, Sparkle } from '@/components/game/assets'
 import { ConfettiBurst } from '@/components/game/Effects'
+import { PowerUpCollectedPopup, BonusMoveBanner } from '@/components/game/Codex'
 import { copyToClipboard } from '@/lib/clipboard'
 import { toast } from 'sonner'
 
@@ -110,10 +111,13 @@ export default function Home() {
             </div>
           </div>
         </header>
+        {/* Floating popup for power-up collection (above everything) */}
+        <PowerUpCollectedPopup />
         {/* Responsive layout: stacked on mobile, side-by-side on desktop */}
         <main className="flex-1 px-3 pb-4 max-w-7xl mx-auto w-full flex flex-col lg:flex-row lg:gap-4 gap-2">
           {/* Left/main column: HUD (mobile) or board (desktop) */}
           <div className="flex flex-col gap-2 lg:flex-1 lg:max-w-2xl lg:mx-auto lg:order-2 lg:self-start lg:sticky lg:top-3">
+            <BonusMoveBanner />
             <GameBoard abilityMode={abilityMode} />
           </div>
           {/* Right column: HUD panels (desktop) or above board (mobile) */}

@@ -1,5 +1,5 @@
 // Jumbo Royale - Move calculation & rule engine
-import { Board, Piece, Move, AnyTeam, CharacterClass } from './types'
+import { Board, Piece, Move, AnyTeam, CharacterClass, PowerUpType, Cell } from './types'
 import { getPieceAt, inBounds, getCell } from './board'
 
 const DIAGS = [
@@ -139,11 +139,13 @@ export function getTeamMoves(board: Board, team: AnyTeam): { pieceId: string; mo
 }
 
 // Apply a move to a board (returns new board, mutates nothing)
-export function applyMove(board: Board, move: Move): { board: Board; promotedToKing: boolean } {
+// Returns the picked-up power-up (if any) so the caller can apply turn-level effects
+export function applyMove(board: Board, move: Move): { board: Board; promotedToKing: boolean; pickedUpPowerUp?: PowerUpType; appliedEffects: PowerUpEffect[] } {
   const newPieces: Record<string, Piece> = {}
   for (const p of Object.values(board.pieces)) {
     newPieces[p.id] = { ...p }
   }
+  const appliedEffects: PowerUpEffect[] = []
   // Remove captured pieces (respect shields)
   for (const capId of move.capturedPieceIds) {
     const cap = newPieces[capId]
@@ -151,31 +153,33 @@ export function applyMove(board: Board, move: Move): { board: Board; promotedToK
     if (cap.hasShield) {
       cap.hasShield = false
       cap.hp = Math.max(1, cap.hp - 1)
+      appliedEffects.push({ type: 'shield_break', pieceId: capId })
     } else {
       cap.hp -= 1
       if (cap.hp <= 0) {
         delete newPieces[capId]
+        appliedEffects.push({ type: 'capture', pieceId: capId })
       }
     }
   }
   // Move the piece
   const mover = newPieces[move.pieceId]
-  if (!mover) return { board, promotedToKing: false }
+  if (!mover) return { board, promotedToKing: false, appliedEffects }
   mover.row = move.toRow
   mover.col = move.toCol
-  // Pick up power-up
+
+  let pickedUpPowerUp: PowerUpType | undefined
   let promotedToKing = false
   const newCells = board.cells.map(row => row.map(cell => ({ ...cell })))
   const landCell = newCells[move.toRow]?.[move.toCol]
-  if (landCell) {
-    if (landCell.type === 'powerup' && landCell.powerUp) {
-      // Pick up effect handled by caller — just clear the cell
-      landCell.type = 'normal'
-      landCell.powerUp = undefined
-    }
-    if (landCell.type === 'blocked') {
-      // shouldn't happen — move validation prevents this
-    }
+  if (landCell && landCell.type === 'powerup' && landCell.powerUp) {
+    pickedUpPowerUp = landCell.powerUp
+    // Apply IMMEDIATE effects here. Caller handles turn-level effects (double_move, extra_jump).
+    const effect = applyPowerUpEffect(mover, pickedUpPowerUp, newPieces, newCells)
+    appliedEffects.push(...effect)
+    // Clear the cell
+    landCell.type = 'normal'
+    landCell.powerUp = undefined
   }
   // King promotion
   if (!mover.isKing) {
@@ -202,7 +206,103 @@ export function applyMove(board: Board, move: Move): { board: Board; promotedToK
   return {
     board: { size: board.size, cells: newCells, pieces: newPieces },
     promotedToKing,
+    pickedUpPowerUp,
+    appliedEffects,
   }
+}
+
+// Power-up effect log entry — used for FX/sound triggers
+export interface PowerUpEffect {
+  type: 'shield' | 'shield_break' | 'capture' | 'freeze' | 'swap' | 'bomb' | 'double_move' | 'extra_jump'
+  pieceId?: string
+  targetPieceIds?: string[]
+}
+
+// Apply a power-up's immediate effects to the board state.
+// Returns effect log entries for FX/sound.
+// NOTE: double_move and extra_jump are NOT applied here — the caller (move:make handler)
+// checks for them and skips the turn-end step.
+function applyPowerUpEffect(
+  mover: Piece,
+  powerUp: PowerUpType,
+  pieces: Record<string, Piece>,
+  cells: Cell[][],
+): PowerUpEffect[] {
+  const effects: PowerUpEffect[] = []
+  const opponents = Object.values(pieces).filter(p => p.team !== mover.team && p.id !== mover.id)
+
+  switch (powerUp) {
+    case 'shield':
+      mover.hasShield = true
+      effects.push({ type: 'shield', pieceId: mover.id })
+      break
+
+    case 'double_move':
+      // Caller handles — just log
+      effects.push({ type: 'double_move', pieceId: mover.id })
+      break
+
+    case 'extra_jump':
+      // Caller handles — just log
+      effects.push({ type: 'extra_jump', pieceId: mover.id })
+      break
+
+    case 'freeze': {
+      // Freeze the nearest opponent piece for 1 turn
+      if (opponents.length > 0) {
+        let nearest = opponents[0]
+        let minDist = Math.abs(nearest.row - mover.row) + Math.abs(nearest.col - mover.col)
+        for (const o of opponents) {
+          const d = Math.abs(o.row - mover.row) + Math.abs(o.col - mover.col)
+          if (d < minDist) {
+            minDist = d
+            nearest = o
+          }
+        }
+        nearest.frozenTurns = Math.max(nearest.frozenTurns, 2) // 2 because it'll be decremented once at turn end
+        effects.push({ type: 'freeze', pieceId: nearest.id })
+      }
+      break
+    }
+
+    case 'swap': {
+      // Swap with a random opponent piece (chaos!)
+      if (opponents.length > 0) {
+        const target = opponents[Math.floor(Math.random() * opponents.length)]
+        const tr = mover.row, tc = mover.col
+        mover.row = target.row
+        mover.col = target.col
+        target.row = tr
+        target.col = tc
+        effects.push({ type: 'swap', pieceId: mover.id, targetPieceIds: [target.id] })
+      }
+      break
+    }
+
+    case 'bomb': {
+      // Destroy the adjacent enemy piece with the lowest HP
+      const adjacent = opponents.filter(o => Math.abs(o.row - mover.row) <= 1 && Math.abs(o.col - mover.col) <= 1)
+      if (adjacent.length > 0) {
+        // Pick weakest
+        adjacent.sort((a, b) => a.hp - b.hp)
+        const target = adjacent[0]
+        if (target.hasShield) {
+          target.hasShield = false
+          target.hp = Math.max(1, target.hp - 1)
+          effects.push({ type: 'shield_break', pieceId: target.id })
+        } else {
+          target.hp -= 1
+          if (target.hp <= 0) {
+            delete pieces[target.id]
+            effects.push({ type: 'bomb', pieceId: target.id })
+          }
+        }
+      }
+      break
+    }
+  }
+  void cells // unused but kept for future tile-based effects
+  return effects
 }
 
 // Apply a power-up to a piece

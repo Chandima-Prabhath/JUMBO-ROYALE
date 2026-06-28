@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/card'
 import { SoundToggle } from '@/components/game/SoundToggle'
 import { Tooltip } from '@/components/game/Tooltip'
 import { AnimalAvatar, TankFace, SpeedsterFace, MageFace, JesterFace } from '@/components/game/assets'
+import { PowerUpLegend, CharacterCodex, CHARACTER_INFO } from '@/components/game/Codex'
 import { copyToClipboard } from '@/lib/clipboard'
 import { toast } from 'sonner'
 
@@ -289,8 +290,21 @@ export function LobbyScreen() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {CHARACTERS.map((c) => {
                   const isPicked = mySlot?.character === c.id
+                  const info = CHARACTER_INFO[c.id]
                   return (
-                    <Tooltip key={c.id} content={c.desc} side="top">
+                    <Tooltip key={c.id} content={
+                      <div className="text-left">
+                        <div className="font-bold flex items-center gap-1">{info.name}</div>
+                        <div className="text-[10px] opacity-90">HP: {info.stats.hp}</div>
+                        {info.stats.passive !== 'None' && <div className="text-[10px] opacity-90">Passive: {info.stats.passive}</div>}
+                        {info.abilityName !== 'No active ability' && (
+                          <>
+                            <div className="text-[10px] opacity-90 font-bold mt-1">⚡ {info.abilityName}</div>
+                            <div className="text-[10px] opacity-90">{info.abilityDesc}</div>
+                          </>
+                        )}
+                      </div>
+                    } side="top">
                       <motion.button
                         whileHover={{ scale: 1.03, y: -3 }}
                         whileTap={{ scale: 0.97 }}
@@ -311,10 +325,18 @@ export function LobbyScreen() {
                           </motion.div>
                         </div>
                         <div className="font-bold text-sm">{c.name}</div>
+                        <div className="text-[10px] text-muted-foreground leading-tight">
+                          {info.abilityName === 'No active ability' ? info.stats.passive : `⚡ ${info.abilityName}`}
+                        </div>
                       </motion.button>
                     </Tooltip>
                   )
                 })}
+              </div>
+              {/* Collapsible guides */}
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <CharacterCodex team={mySlot?.team || 'red'} />
+                <PowerUpLegend />
               </div>
             </Card>
           </div>

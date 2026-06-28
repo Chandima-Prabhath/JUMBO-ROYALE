@@ -4,7 +4,7 @@ import { Server } from 'socket.io'
 import { v4 as uuid } from 'uuid'
 import {
   GameState, GameMode, PlayerSlot, AnyTeam, CharacterClass,
-  Move, EmoteEvent, Piece, BotDifficulty,
+  Move, EmoteEvent, Piece, BotDifficulty, PowerUpType,
 } from '../../src/game/types'
 import { createBoard, BOARD_SIZE, TURN_DURATION_SEC, MAX_MOVES_PER_TURN, CHAOS_INTERVAL_SEC } from '../../src/game/board'
 import { getLegalMoves, applyMove, getTeamMoves, getAbilityTargets } from '../../src/game/engine'
@@ -264,7 +264,7 @@ function runBotMove(state: GameState, botPlayerId: string) {
   }
 
   // Apply the move
-  const { board, promotedToKing } = applyMove(state.board, best.move)
+  const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMove(state.board, best.move)
   state.board = board
   if (best.move.capturedPieceIds.length > 0) {
     slot.captures += best.move.capturedPieceIds.length
@@ -273,6 +273,23 @@ function runBotMove(state: GameState, botPlayerId: string) {
   }
   if (promotedToKing) {
     io.to(state.roomCode).emit('promote', best.pieceId)
+  }
+  // Broadcast power-up collection + effects for client FX/sound
+  if (pickedUpPowerUp) {
+    io.to(state.roomCode).emit('powerup:collected', {
+      pieceId: best.pieceId,
+      powerUp: pickedUpPowerUp,
+      playerName: slot.name,
+      effects: appliedEffects,
+    })
+    slot.score += 5
+  }
+  for (const eff of appliedEffects) {
+    if (eff.type === 'freeze') io.to(state.roomCode).emit('fx', { type: 'freeze', pieceId: eff.pieceId })
+    else if (eff.type === 'swap' && eff.targetPieceIds) io.to(state.roomCode).emit('fx', { type: 'swap', pieceIds: [eff.pieceId, ...eff.targetPieceIds] })
+    else if (eff.type === 'bomb') io.to(state.roomCode).emit('fx', { type: 'bomb', pieceId: eff.pieceId })
+    else if (eff.type === 'shield') io.to(state.roomCode).emit('fx', { type: 'shield', pieceId: eff.pieceId })
+    else if (eff.type === 'shield_break') io.to(state.roomCode).emit('fx', { type: 'shield_break', pieceId: eff.pieceId })
   }
   state.movesThisTurn += 1
   state.version += 1
@@ -298,6 +315,14 @@ function runBotMove(state: GameState, botPlayerId: string) {
       setTimeout(() => runBotChainCapture(state, botPlayerId, movedPiece.id), 500)
       return
     }
+  }
+
+  // double_move / extra_jump: bot gets another move
+  if (pickedUpPowerUp === 'double_move' || pickedUpPowerUp === 'extra_jump') {
+    state.turnStartedAt = Date.now()
+    io.to(state.roomCode).emit('bonus_move', { pieceId: best.pieceId, powerUp: pickedUpPowerUp })
+    setTimeout(() => runBotMove(state, botPlayerId), 600)
+    return
   }
 
   // End turn after a short pause
@@ -591,7 +616,7 @@ io.on('connection', (socket) => {
       return
     }
     // Apply
-    const { board, promotedToKing } = applyMove(state.board, match)
+    const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMove(state.board, match)
     state.board = board
     if (match.capturedPieceIds.length > 0) {
       slot.captures += match.capturedPieceIds.length
@@ -600,6 +625,25 @@ io.on('connection', (socket) => {
     }
     if (promotedToKing) {
       io.to(state.roomCode).emit('promote', match.pieceId)
+    }
+    // Broadcast power-up collection + effects for client FX/sound
+    if (pickedUpPowerUp) {
+      io.to(state.roomCode).emit('powerup:collected', {
+        pieceId: match.pieceId,
+        powerUp: pickedUpPowerUp,
+        playerName: slot.name,
+        effects: appliedEffects,
+      })
+      // Power-up score bonus
+      slot.score += 5
+    }
+    // Broadcast individual effects (freeze, swap, bomb) for FX
+    for (const eff of appliedEffects) {
+      if (eff.type === 'freeze') io.to(state.roomCode).emit('fx', { type: 'freeze', pieceId: eff.pieceId })
+      else if (eff.type === 'swap' && eff.targetPieceIds) io.to(state.roomCode).emit('fx', { type: 'swap', pieceIds: [eff.pieceId, ...eff.targetPieceIds] })
+      else if (eff.type === 'bomb') io.to(state.roomCode).emit('fx', { type: 'bomb', pieceId: eff.pieceId })
+      else if (eff.type === 'shield') io.to(state.roomCode).emit('fx', { type: 'shield', pieceId: eff.pieceId })
+      else if (eff.type === 'shield_break') io.to(state.roomCode).emit('fx', { type: 'shield_break', pieceId: eff.pieceId })
     }
     state.movesThisTurn += 1
     state.version += 1
@@ -616,10 +660,9 @@ io.on('connection', (socket) => {
       return
     }
 
-    // End turn unless extra_jump power-up or chain capture available
+    // Chain captures: if this was a capture, check for follow-ups
     const movedPiece = state.board.pieces[match.pieceId]
     if (movedPiece && match.kind === 'capture') {
-      // Check for chain captures from new position
       const followUps = getLegalMoves(state.board, movedPiece).filter(m => m.kind === 'capture' || m.kind === 'multi_capture')
       if (followUps.length > 0) {
         // Allow chain: don't end turn
@@ -627,6 +670,15 @@ io.on('connection', (socket) => {
         return
       }
     }
+
+    // double_move / extra_jump: don't end turn — let player move again
+    if (pickedUpPowerUp === 'double_move' || pickedUpPowerUp === 'extra_jump') {
+      // Reset turn timer for the bonus move
+      state.turnStartedAt = Date.now()
+      io.to(state.roomCode).emit('bonus_move', { pieceId: match.pieceId, powerUp: pickedUpPowerUp })
+      return
+    }
+
     // End turn
     setTimeout(() => {
       nextTurn(state)
@@ -655,10 +707,49 @@ io.on('connection', (socket) => {
       return
     }
     piece.abilityUsed = true
+    let pickedUpPowerUp: PowerUpType | undefined
+    let promotedToKing = false
+
     if (piece.character === 'mage') {
+      // Teleport to target tile
       piece.row = targetRow
       piece.col = targetCol
       io.to(state.roomCode).emit('fx', { type: 'teleport', pieceId })
+      // Pick up power-up at destination (if any)
+      const landCell = state.board.cells[targetRow]?.[targetCol]
+      if (landCell && landCell.type === 'powerup' && landCell.powerUp) {
+        pickedUpPowerUp = landCell.powerUp
+        // Apply immediate effects using a temp board-like structure
+        const tempBoard = { ...state.board, pieces: state.board.pieces } // same reference
+        const result = applyMove(tempBoard, {
+          pieceId,
+          fromRow: targetRow, fromCol: targetCol,
+          toRow: targetRow, toCol: targetCol,
+          kind: 'special', capturedPieceIds: [], isChainable: false,
+        })
+        state.board = result.board
+        // The above applyMove will move the piece (no-op since same pos) and apply power-up effect
+        // Broadcast power-up collection
+        if (pickedUpPowerUp) {
+          io.to(state.roomCode).emit('powerup:collected', {
+            pieceId, powerUp: pickedUpPowerUp, playerName: slot.name, effects: result.appliedEffects,
+          })
+          slot.score += 5
+          for (const eff of result.appliedEffects) {
+            if (eff.type === 'freeze') io.to(state.roomCode).emit('fx', { type: 'freeze', pieceId: eff.pieceId })
+            else if (eff.type === 'swap' && eff.targetPieceIds) io.to(state.roomCode).emit('fx', { type: 'swap', pieceIds: [eff.pieceId, ...eff.targetPieceIds] })
+            else if (eff.type === 'bomb') io.to(state.roomCode).emit('fx', { type: 'bomb', pieceId: eff.pieceId })
+            else if (eff.type === 'shield') io.to(state.roomCode).emit('fx', { type: 'shield', pieceId: eff.pieceId })
+          }
+        }
+      }
+      // King promotion check
+      if (!piece.isKing) {
+        if ((piece.team === 'red' && piece.row === 0) || ((piece.team === 'blue' || piece.team === 'boss') && piece.row === state.board.size - 1)) {
+          piece.isKing = true
+          promotedToKing = true
+        }
+      }
     } else if (piece.character === 'jester') {
       const other = Object.values(state.board.pieces).find(p => p.row === targetRow && p.col === targetCol && p.id !== piece.id)
       if (other) {
@@ -670,8 +761,26 @@ io.on('connection', (socket) => {
         io.to(state.roomCode).emit('fx', { type: 'swap', pieceIds: [pieceId, other.id] })
       }
     }
+
+    if (promotedToKing) io.to(state.roomCode).emit('promote', pieceId)
     state.version += 1
     broadcastRoom(state.roomCode)
+
+    // After mage teleport, check for chain captures from new position
+    if (piece.character === 'mage') {
+      const followUps = getLegalMoves(state.board, piece).filter(m => m.kind === 'capture' || m.kind === 'multi_capture')
+      if (followUps.length > 0) {
+        io.to(state.roomCode).emit('chain:available', { pieceId, moves: followUps })
+        return
+      }
+      // double_move/extra_jump bonus
+      if (pickedUpPowerUp === 'double_move' || pickedUpPowerUp === 'extra_jump') {
+        state.turnStartedAt = Date.now()
+        io.to(state.roomCode).emit('bonus_move', { pieceId, powerUp: pickedUpPowerUp })
+        return
+      }
+    }
+    // Ability use doesn't end turn — player can still move normally after
   })
 
   socket.on('emote', ({ emoji, targetPieceId }: { emoji: string; targetPieceId?: string }) => {
