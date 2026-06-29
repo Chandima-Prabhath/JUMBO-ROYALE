@@ -1003,13 +1003,9 @@ io.on('connection', (socket) => {
           else if (eff.type === 'shield_break') io.to(state.roomCode).emit('fx', { type: 'shield_break', pieceId: eff.pieceId })
         }
       }
-      // King promotion check
-      if (!piece.isKing) {
-        if ((piece.team === 'red' && piece.row === 0) || ((piece.team === 'blue' || piece.team === 'boss') && piece.row === state.board.size - 1)) {
-          piece.isKing = true
-          promotedToKing = true
-        }
-      }
+      // NOTE: Abilities do NOT trigger king promotion.
+      // King promotion only happens via NORMAL MOVES (see applyMove in engine.ts).
+      // This prevents mage teleport and jester swap from being "instant king" exploits.
     } else if (piece.character === 'jester') {
       const other = Object.values(state.board.pieces).find(p => p.row === targetRow && p.col === targetCol && p.id !== piece.id)
       if (other) {
@@ -1020,6 +1016,7 @@ io.on('connection', (socket) => {
         other.col = tc
         io.to(state.roomCode).emit('fx', { type: 'swap', pieceIds: [pieceId, other.id] })
       }
+      // NOTE: Jester swap does NOT trigger king promotion (same as mage).
     }
 
     if (promotedToKing) io.to(state.roomCode).emit('promote', pieceId)

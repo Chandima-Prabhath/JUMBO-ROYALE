@@ -71,10 +71,10 @@ export const CHARACTER_INFO: Record<CharacterClass, {
   speedster: {
     name: 'Speedster',
     Face: SpeedsterFace,
-    stats: { hp: 1, ability: 'None', passive: 'Standard pawn' },
-    abilityName: 'No active ability',
-    abilityDesc: 'Speedsters have no active ability — they are simple but versatile.',
-    abilityUses: '—',
+    stats: { hp: 1, ability: 'Dash (passive)', passive: 'Move 2 squares forward' },
+    abilityName: 'Dash (Passive)',
+    abilityDesc: 'Speedsters can move 2 squares forward in one move (if both squares are empty). No active ability to activate — the dash is always available.',
+    abilityUses: 'Always active',
     color: '#4fc8ff',
   },
   mage: {
@@ -91,7 +91,7 @@ export const CHARACTER_INFO: Record<CharacterClass, {
     Face: JesterFace,
     stats: { hp: 1, ability: 'Swap', passive: 'None' },
     abilityName: 'Swap',
-    abilityDesc: 'Swap places with any other piece on the board (friend or foe). Pure chaos — use it to escape danger or set up captures.',
+    abilityDesc: 'Swap places with an adjacent piece (within 2 squares). Use it to escape danger, reposition, or set up captures. Does NOT trigger king promotion.',
     abilityUses: '1 use per game',
     color: '#2ecc71',
   },

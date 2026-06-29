@@ -294,25 +294,24 @@ export function shouldUseAbility(
           if (difficulty === 'easy' && Math.random() > 0.3) continue
           return { shouldUse: true, targetRow: r, targetCol: c }
         }
-        // Or would it promote?
-        if (piece.team === 'red' && r === 0) {
-          return { shouldUse: true, targetRow: r, targetCol: c }
-        }
-        if ((piece.team === 'blue' || piece.team === 'boss') && r === size - 1) {
-          return { shouldUse: true, targetRow: r, targetCol: c }
-        }
+        // NOTE: Abilities no longer trigger king promotion, so we don't
+        // teleport to the back row just to promote. That was an exploit.
       }
     }
   }
 
   // Jester swap — use to escape danger or set up capture
+  // NOTE: Jester can only swap with ADJACENT pieces (within 2 tiles).
   if (piece.character === 'jester') {
     // Use if this piece is vulnerable
     if (isVulnerable(state.board, piece)) {
-      // Find a safer piece to swap with (one that's not vulnerable)
+      // Find a safer piece to swap with (within 2 tiles, opponent preferably)
       for (const other of Object.values(state.board.pieces)) {
         if (other.id === piece.id) continue
-        if (other.team === piece.team) continue // can swap with anyone (opponent preferably)
+        if (other.team === piece.team) continue
+        // Range check: only adjacent pieces (within 2 tiles Chebyshev distance)
+        const dist = Math.max(Math.abs(other.row - piece.row), Math.abs(other.col - piece.col))
+        if (dist > 2) continue
         // Would swapping put the opponent in danger? Good!
         const simOther: Piece = { ...other, row: piece.row, col: piece.col }
         const simPiece: Piece = { ...piece, row: other.row, col: other.col }

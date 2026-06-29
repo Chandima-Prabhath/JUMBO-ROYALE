@@ -37,6 +37,29 @@ export function getSimpleMoves(board: Board, piece: Piece): Move[] {
       isChainable: false,
       pickedUpPowerUp: cell?.powerUp,
     })
+    // Speedster Dash: can move 2 squares forward if both squares are empty
+    if (piece.character === 'speedster' && !piece.isKing) {
+      const r2 = piece.row + dr * 2
+      const c2 = piece.col + dc * 2
+      if (inBounds(r2, c2)) {
+        if (!getPieceAt(board, r2, c2)) {
+          const cell2 = getCell(board, r2, c2)
+          if (cell2?.type !== 'blocked') {
+            moves.push({
+              pieceId: piece.id,
+              fromRow: piece.row,
+              fromCol: piece.col,
+              toRow: r2,
+              toCol: c2,
+              kind: 'simple',
+              capturedPieceIds: [],
+              isChainable: false,
+              pickedUpPowerUp: cell2?.powerUp,
+            })
+          }
+        }
+      }
+    }
   }
   return moves
 }
@@ -343,11 +366,16 @@ export function getAbilityTargets(board: Board, piece: Piece): { row: number; co
       return targets
     }
     case 'jester': {
-      // Swap: any other piece on board
+      // Swap: only with ADJACENT pieces (within 2 tiles Chebyshev distance).
+      // This prevents the "instant king" exploit (swapping to the back row)
+      // and makes jester a tactical repositioning tool, not a board-wide teleport.
       const targets: { row: number; col: number }[] = []
       for (const p of Object.values(board.pieces)) {
         if (p.id === piece.id) continue
-        targets.push({ row: p.row, col: p.col })
+        const dist = Math.max(Math.abs(p.row - piece.row), Math.abs(p.col - piece.col))
+        if (dist > 0 && dist <= 2) {
+          targets.push({ row: p.row, col: p.col })
+        }
       }
       return targets
     }

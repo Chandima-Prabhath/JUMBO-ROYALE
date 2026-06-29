@@ -22,9 +22,9 @@ const BOT_DIFFICULTIES: { id: BotDifficulty; label: string; emoji: string; desc:
 
 const CHARACTERS: { id: CharacterClass; name: string; emoji: string; desc: string; Face: typeof TankFace }[] = [
   { id: 'tank', name: 'Tank', emoji: '🛡️', desc: '2 HP, starts with shield. Slow but tough.', Face: TankFace },
-  { id: 'speedster', name: 'Speedster', emoji: '⚡', desc: 'Sneaky diagonal moves. Agile.', Face: SpeedsterFace },
-  { id: 'mage', name: 'Mage', emoji: '🧙', desc: 'Teleport once. Big brain plays.', Face: MageFace },
-  { id: 'jester', name: 'Jester', emoji: '🤡', desc: 'Swap places with anyone. Chaos!', Face: JesterFace },
+  { id: 'speedster', name: 'Speedster', emoji: '⚡', desc: 'Dash 2 squares forward. Fast!', Face: SpeedsterFace },
+  { id: 'mage', name: 'Mage', emoji: '🧙', desc: 'Teleport once (3 tiles). Big brain plays.', Face: MageFace },
+  { id: 'jester', name: 'Jester', emoji: '🤡', desc: 'Swap with adjacent piece. Tricky!', Face: JesterFace },
 ]
 
 export function LobbyScreen() {
