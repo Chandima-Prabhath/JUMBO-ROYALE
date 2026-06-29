@@ -68,7 +68,9 @@ export function getSimpleMoves(board: Board, piece: Piece): Move[] {
 
 /**
  * Get all capture moves for a piece, including chain captures.
- * Captures work in ALL diagonal directions for ALL pieces (per codex).
+ * American checkers rules:
+ * - Pawns capture FORWARD only (same as movement direction)
+ * - Kings capture in ALL 4 diagonal directions
  */
 export function getCaptureMoves(board: Board, piece: Piece): Move[] {
   if (piece.frozenTurns > 0) return []
@@ -85,7 +87,9 @@ function exploreCaptures(
   captured: string[],
   out: Move[],
 ) {
-  for (const [dr, dc] of ALL_DIAGS) {
+  // Kings use all 4 diagonals; pawns use forward-only (American checkers)
+  const dirs = current.isKing ? ALL_DIAGS : getMoveDirections(current)
+  for (const [dr, dc] of dirs) {
     const midR = current.row + dr
     const midC = current.col + dc
     const landR = current.row + dr * 2

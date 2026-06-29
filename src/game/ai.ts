@@ -267,7 +267,13 @@ function isVulnerable(board: Board, piece: Piece): boolean {
     if (!inBounds(board, landR, landC)) continue
     const mid = getPieceAt(board, midR, midC)
     if (!mid || mid.team === piece.team) continue
-    // Kings can capture any direction; pawns can capture any direction too (per codex)
+    // American checkers: pawns can only capture forward.
+    // So a pawn is only vulnerable from an enemy that is BEHIND it
+    // (the enemy would jump forward over this piece).
+    // The enemy at (midR, midC) jumps in direction (dr, dc) to land at (landR, landC).
+    // For the enemy, this is a forward move if dr matches their forward direction.
+    const enemyForward = mid.team === 'red' ? -1 : 1
+    if (!mid.isKing && dr !== enemyForward) continue
     const land = getPieceAt(board, landR, landC)
     if (!land || land.id === piece.id) return true
   }

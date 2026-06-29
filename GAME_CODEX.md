@@ -87,10 +87,11 @@ interface Piece {
   - Empty (no piece)
   - Not a blocked cell
 
-### Capture Moves
-- **ALL pieces (pawn or king) can capture in ALL 4 diagonal directions.**
-  - This is standard checkers rules — captures are not limited to forward-only.
-  - This prevents Kings from being uncatchable.
+### Capture Moves (American Checkers Rules)
+- **Pawns** (non-king): can only capture **FORWARD** (same direction as simple moves).
+  - Red pawns capture toward row 0 (up).
+  - Blue/Boss pawns capture toward row 7 (down).
+- **Kings**: can capture in **ALL 4 diagonal directions** (forward and backward).
 - A capture jumps over an adjacent enemy piece to land on the empty square 2 tiles away.
 - The captured piece's HP decreases by 1. If HP reaches 0, it's removed.
 - If the captured piece has a shield, the shield absorbs the hit (shield breaks, HP stays at minimum 1).
