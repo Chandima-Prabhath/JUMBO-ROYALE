@@ -9,11 +9,37 @@ export function checkWinner(state: GameState): AnyTeam | undefined {
     const blueAlive = Object.values(state.board.pieces).some(p => p.team === 'blue')
     if (!redAlive) return 'blue'
     if (!blueAlive) return 'red'
+
     // Stalemate: current team has no moves
     const currentMoves = getTeamMoves(state.board, state.currentTurnTeam)
     if (currentMoves.length === 0) {
-      // Team with no moves loses
+      // Check if ALL pieces are frozen — if so, skip turn instead of losing
+      const teamPieces = Object.values(state.board.pieces).filter(p => p.team === state.currentTurnTeam)
+      const allFrozen = teamPieces.length > 0 && teamPieces.every(p => p.frozenTurns > 0)
+      if (allFrozen) {
+        // All pieces frozen — don't lose, just skip (return undefined so turn continues)
+        return undefined
+      }
+      // Genuinely no moves (all pieces blocked/trapped) — team loses
       return state.currentTurnTeam === 'red' ? 'blue' : 'red'
+    }
+
+    // Game pacing: prevent endless games
+    // 1. Turn limit: after 80 total turns, team with more pieces wins
+    if (state.turnCount >= 80) {
+      const redCount = Object.values(state.board.pieces).filter(p => p.team === 'red').length
+      const blueCount = Object.values(state.board.pieces).filter(p => p.team === 'blue').length
+      if (redCount > blueCount) return 'red'
+      if (blueCount > redCount) return 'blue'
+      return 'red' // tie goes to red (arbitrary)
+    }
+    // 2. No-capture limit: after 20 turns without any capture, team with more pieces wins
+    if (state.turnsWithoutCapture >= 20) {
+      const redCount = Object.values(state.board.pieces).filter(p => p.team === 'red').length
+      const blueCount = Object.values(state.board.pieces).filter(p => p.team === 'blue').length
+      if (redCount > blueCount) return 'red'
+      if (blueCount > redCount) return 'blue'
+      return 'red'
     }
     return undefined
   } else {
@@ -22,6 +48,24 @@ export function checkWinner(state: GameState): AnyTeam | undefined {
     const redAlive = Object.values(state.board.pieces).some(p => p.team === 'red')
     if (!bossAlive) return 'red'
     if (!redAlive) return 'boss'
+
+    // Stalemate: red team has no moves
+    if (state.currentTurnTeam === 'red') {
+      const redMoves = getTeamMoves(state.board, 'red')
+      if (redMoves.length === 0) {
+        const redPieces = Object.values(state.board.pieces).filter(p => p.team === 'red')
+        const allFrozen = redPieces.length > 0 && redPieces.every(p => p.frozenTurns > 0)
+        if (!allFrozen) {
+          // Red is genuinely stuck — boss wins
+          return 'boss'
+        }
+      }
+    }
+
+    // Game pacing: after 100 turns, boss wins (prevents endless co-op games)
+    if (state.turnCount >= 100) {
+      return 'boss'
+    }
     return undefined
   }
 }

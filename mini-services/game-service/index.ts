@@ -216,6 +216,8 @@ function nextTurn(state: GameState) {
   }
   state.turnStartedAt = Date.now()
   state.movesThisTurn = 0
+  state.turnCount += 1
+  state.turnsWithoutCapture += 1
   // Chaos event?
   if (Date.now() >= state.nextChaosAt) {
     const event = rollChaosEvent()
@@ -226,6 +228,22 @@ function nextTurn(state: GameState) {
     io.to(state.roomCode).emit('chaos', event)
   }
   state.version += 1
+
+  // Check if the new current team has all pieces frozen — emit "turn skipped" notification
+  const newTeamPieces = Object.values(state.board.pieces).filter(p => p.team === state.currentTurnTeam)
+  const allFrozen = newTeamPieces.length > 0 && newTeamPieces.every(p => p.frozenTurns > 0)
+  if (allFrozen) {
+    io.to(state.roomCode).emit('turn_skipped', {
+      team: state.currentTurnTeam,
+      reason: 'All pieces are frozen!',
+    })
+    // Auto-skip the turn after a short delay
+    setTimeout(() => {
+      nextTurn(state)
+      broadcastRoom(state.roomCode)
+    }, 1500)
+    return
+  }
 
   // If new current player is a bot, schedule their turn
   scheduleBotTurnIfApplicable(state)
@@ -689,6 +707,8 @@ io.on('connection', (socket) => {
       maxMovesPerTurn: MAX_MOVES_PER_TURN,
       nextChaosAt: 0,
       chaosCount: 0,
+      turnCount: 0,
+      turnsWithoutCapture: 0,
       emoteLog: [],
       version: 1,
     }
@@ -871,6 +891,7 @@ io.on('connection', (socket) => {
       slot.captures += match.capturedPieceIds.length
       slot.score += match.capturedPieceIds.length * 10
       if (match.capturedPieceIds.length > 1) slot.score += 20 // combo bonus
+      state.turnsWithoutCapture = 0 // reset capture counter
     }
     if (promotedToKing) {
       io.to(state.roomCode).emit('promote', match.pieceId)

@@ -130,6 +130,8 @@ export interface GameState {
   pendingChaosEvent?: ChaosEvent
   nextChaosAt: number
   chaosCount: number
+  turnCount: number // total turns elapsed (for game pacing)
+  turnsWithoutCapture: number // turns since last capture (for game pacing)
   emoteLog: EmoteEvent[]
   winnerTeam?: AnyTeam
   endedAt?: number

@@ -22,6 +22,7 @@ interface JumboStore {
   lastMove: { pieceId: string; fromRow: number; fromCol: number; toRow: number; toCol: number; playerName: string; team: string; kind: string; capturedCount: number; timestamp: number } | null
   moveLog: { id: string; playerName: string; team: string; pieceId: string; fromRow: number; fromCol: number; toRow: number; toCol: number; kind: string; capturedCount: number; abilityUsed: boolean; reason: string; timestamp: number }[]
   botThinking: { playerName: string } | null
+  turnSkipped: { team: string; reason: string; timestamp: number } | null
 
   // actions
   init: () => void
@@ -58,6 +59,7 @@ export const useJumbo = create<JumboStore>((set, get) => ({
   lastMove: null,
   moveLog: [],
   botThinking: null,
+  turnSkipped: null,
 
   init: () => {
     if (get().connected) return
@@ -233,6 +235,11 @@ export const useJumbo = create<JumboStore>((set, get) => ({
     })
     socket.on('bot:thinking', (data: { playerName: string }) => {
       set({ botThinking: data })
+    })
+    socket.on('turn_skipped', (data: { team: string; reason: string }) => {
+      set({ turnSkipped: { team: data.team, reason: data.reason, timestamp: Date.now() } })
+      playSfx('freeze')
+      setTimeout(() => set({ turnSkipped: null }), 2000)
     })
   },
 

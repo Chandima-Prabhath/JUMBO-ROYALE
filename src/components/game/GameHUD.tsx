@@ -28,6 +28,7 @@ function formatTime(ms: number) {
 export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: { pieceId: string; targets: { row: number; col: number }[] } | null) => void }) {
   const { state, myPlayerId, selectedPieceId, legalMoves, useAbility, sendEmote, lastEmotes, pendingChaos, bonusMove } = useJumbo()
   const botThinking = useJumbo(s => s.botThinking)
+  const turnSkipped = useJumbo(s => s.turnSkipped)
   const [emoteOpen, setEmoteOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   const [now, setNow] = useState(Date.now())
@@ -259,9 +260,9 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
 
       {/* ===== Player scoreboards ===== */}
       <div className="grid grid-cols-2 gap-2">
-        <TeamScoreboard label="RED" color="#ff4fa3" colorDark="#c43678" players={redPlayers} isCurrent={state.currentTurnTeam === 'red'} myPlayerId={myPlayerId} />
+        <TeamScoreboard label="RED" color="#ff4fa3" colorDark="#c43678" players={redPlayers} isCurrent={state.currentTurnTeam === 'red'} myPlayerId={myPlayerId} pieceCount={Object.values(state.board.pieces).filter(p => p.team === 'red').length} />
         {state.mode === 'pvp' ? (
-          <TeamScoreboard label="BLUE" color="#4f7bff" colorDark="#2848a8" players={bluePlayers} isCurrent={state.currentTurnTeam === 'blue'} myPlayerId={myPlayerId} />
+          <TeamScoreboard label="BLUE" color="#4f7bff" colorDark="#2848a8" players={bluePlayers} isCurrent={state.currentTurnTeam === 'blue'} myPlayerId={myPlayerId} pieceCount={Object.values(state.board.pieces).filter(p => p.team === 'blue').length} />
         ) : (
           <div
             className="rounded-2xl p-2"
@@ -406,6 +407,29 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
               transition={{ duration: 1, repeat: Infinity }}
             >👆</motion.span>
             Tap one of your pieces to see its moves
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ===== Turn skipped banner (all pieces frozen) ===== */}
+      <AnimatePresence>
+        {turnSkipped && (
+          <motion.div
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.5, opacity: 0 }}
+            className="rounded-2xl p-3 text-center"
+            style={{
+              background: 'linear-gradient(135deg, #4fc8ff, #3a9bd9)',
+              border: '3px solid #1a0d2e',
+              boxShadow: '0 3px 0 #1a0d2e',
+            }}
+          >
+            <div className="text-2xl mb-1">❄️</div>
+            <div className="font-bold text-white text-sm" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
+              TURN SKIPPED — {turnSkipped.team.toUpperCase()}
+            </div>
+            <div className="text-white/90 text-xs">{turnSkipped.reason}</div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -604,13 +628,14 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
   )
 }
 
-function TeamScoreboard({ label, color, colorDark, players, isCurrent, myPlayerId }: {
+function TeamScoreboard({ label, color, colorDark, players, isCurrent, myPlayerId, pieceCount }: {
   label: string
   color: string
   colorDark: string
   players: { id: string; name: string; avatar?: string; score: number; captures: number; isBot?: boolean; character: string }[]
   isCurrent: boolean
   myPlayerId: string | null
+  pieceCount: number
 }) {
   return (
     <motion.div
@@ -625,16 +650,19 @@ function TeamScoreboard({ label, color, colorDark, players, isCurrent, myPlayerI
     >
       <div className="text-xs font-bold text-white/90 mb-1 flex items-center justify-between">
         <span>{label === 'RED' ? '🔴' : '🔵'} {label}</span>
-        <AnimatePresence>
-          {isCurrent && (
-            <motion.span
-              initial={{ scale: 0, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0, opacity: 0 }}
-              className="text-[10px] bg-white/25 px-1.5 rounded-full"
-            >▶ TURN</motion.span>
-          )}
-        </AnimatePresence>
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] bg-black/30 px-1.5 rounded-full font-mono">{pieceCount} ♟</span>
+          <AnimatePresence>
+            {isCurrent && (
+              <motion.span
+                initial={{ scale: 0, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0, opacity: 0 }}
+                className="text-[10px] bg-white/25 px-1.5 rounded-full"
+              >▶ TURN</motion.span>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
       <div className="space-y-1">
         <AnimatePresence mode="popLayout">
