@@ -102,7 +102,7 @@ function createTutorialBoard(step: number): Board {
   const pieces: Record<string, Piece> = {}
 
   if (step <= 1) {
-    // Step 1-2: Simple movement — a few red pieces at the bottom
+    // Step 0-1: Welcome + Moving — basic red pieces
     pieces['t1'] = makeTutorialPiece('t1', 'red', 'tank', 6, 1)
     pieces['t2'] = makeTutorialPiece('t2', 'red', 'tank', 6, 3)
     pieces['t3'] = makeTutorialPiece('t3', 'red', 'tank', 6, 5)
@@ -110,7 +110,10 @@ function createTutorialBoard(step: number): Board {
   }
 
   if (step === 2 || step === 3) {
-    // Step 3-4: Capturing — add blue pieces to jump over
+    // Step 2-3: Capturing + Chain captures — red pieces + blue pieces to jump
+    pieces['t1'] = makeTutorialPiece('t1', 'red', 'tank', 6, 1)
+    pieces['t2'] = makeTutorialPiece('t2', 'red', 'tank', 6, 3)
+    pieces['t3'] = makeTutorialPiece('t3', 'red', 'tank', 6, 5)
     pieces['b1'] = makeTutorialPiece('b1', 'blue', 'speedster', 5, 2)
     pieces['b2'] = makeTutorialPiece('b2', 'blue', 'speedster', 3, 4)
     pieces['b3'] = makeTutorialPiece('b3', 'blue', 'speedster', 3, 2)
@@ -218,8 +221,29 @@ export function TutorialMode({ onExit }: { onExit: () => void }) {
     // Make a move
     const move = legalMoves.find(m => m.toRow === row && m.toCol === col)
     if (move && selectedPieceId) {
-      const { board: newBoard } = applyMove(board, move)
-      setBoard(newBoard)
+      // Build a minimal GameState for the engine API
+      const tutorialState = {
+        id: 'tutorial',
+        roomCode: 'TUTORIAL',
+        mode: 'pvp' as const,
+        phase: 'playing' as const,
+        board,
+        players: [],
+        currentTurnTeam: 'red' as const,
+        currentPlayerIndex: 0,
+        turnStartedAt: Date.now(),
+        turnDurationSec: 30,
+        movesThisTurn: 0,
+        nextChaosAt: 0,
+        chaosCount: 0,
+        turnCount: 0,
+        turnsWithoutCapture: 0,
+        version: 1,
+      }
+      const result = applyMove(tutorialState, move)
+      if (result.success && result.newState) {
+        setBoard(result.newState.board)
+      }
       setSelectedPieceId(null)
       setLegalMoves([])
       return

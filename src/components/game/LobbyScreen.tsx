@@ -1,6 +1,6 @@
 'use client'
 import { useJumbo } from '@/stores/jumbo'
-import { CharacterClass, AnyTeam, BotDifficulty } from '@/game/types'
+import { AnyTeam, BotDifficulty } from '@/game/types'
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
@@ -8,8 +8,8 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { SoundToggle } from '@/components/game/SoundToggle'
 import { Tooltip } from '@/components/game/Tooltip'
-import { AnimalAvatar, TankFace, SpeedsterFace, MageFace, JesterFace } from '@/components/game/assets'
-import { PowerUpLegend, CharacterCodex, CHARACTER_INFO } from '@/components/game/Codex'
+import { AnimalAvatar } from '@/components/game/assets'
+import { PowerUpLegend, CharacterCodex } from '@/components/game/Codex'
 import { copyToClipboard } from '@/lib/clipboard'
 import { toast } from 'sonner'
 
@@ -18,13 +18,6 @@ const BOT_DIFFICULTIES: { id: BotDifficulty; label: string; emoji: string; desc:
   { id: 'medium', label: 'Medium', emoji: '⚔️', desc: 'Solid play, thinks ahead' },
   { id: 'hard', label: 'Hard', emoji: '🔥', desc: 'Deep minimax, tough opponent' },
   { id: 'brutal', label: 'Brutal', emoji: '💀', desc: 'Plays optimally, no mercy' },
-]
-
-const CHARACTERS: { id: CharacterClass; name: string; emoji: string; desc: string; Face: typeof TankFace }[] = [
-  { id: 'tank', name: 'Tank', emoji: '🛡️', desc: '2 HP, starts with shield. Slow but tough.', Face: TankFace },
-  { id: 'speedster', name: 'Speedster', emoji: '⚡', desc: 'Dash 2 squares forward. Fast!', Face: SpeedsterFace },
-  { id: 'mage', name: 'Mage', emoji: '🧙', desc: 'Teleport once (3 tiles). Big brain plays.', Face: MageFace },
-  { id: 'jester', name: 'Jester', emoji: '🤡', desc: 'Swap with adjacent piece. Tricky!', Face: JesterFace },
 ]
 
 export function LobbyScreen() {
@@ -44,10 +37,6 @@ export function LobbyScreen() {
       return
     }
     updatePlayer({ team })
-  }
-
-  const handleCharacterPick = (char: CharacterClass) => {
-    updatePlayer({ character: char })
   }
 
   const handleReady = () => {
@@ -284,57 +273,15 @@ export function LobbyScreen() {
               </Card>
             )}
 
-            {/* Character pick */}
-            <Card className={`p-4 ${state.mode === 'coop' ? 'md:col-span-2' : ''}`}>
-              <h2 className="font-bold mb-3 flex items-center gap-2"><span>🎭</span> Pick Character</h2>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {CHARACTERS.map((c) => {
-                  const isPicked = mySlot?.character === c.id
-                  const info = CHARACTER_INFO[c.id]
-                  return (
-                    <Tooltip key={c.id} content={
-                      <div className="text-left">
-                        <div className="font-bold flex items-center gap-1">{info.name}</div>
-                        <div className="text-[10px] opacity-90">HP: {info.stats.hp}</div>
-                        {info.stats.passive !== 'None' && <div className="text-[10px] opacity-90">Passive: {info.stats.passive}</div>}
-                        {info.abilityName !== 'No active ability' && (
-                          <>
-                            <div className="text-[10px] opacity-90 font-bold mt-1">⚡ {info.abilityName}</div>
-                            <div className="text-[10px] opacity-90">{info.abilityDesc}</div>
-                          </>
-                        )}
-                      </div>
-                    } side="top">
-                      <motion.button
-                        whileHover={{ scale: 1.03, y: -3 }}
-                        whileTap={{ scale: 0.97 }}
-                        layout
-                        onClick={() => handleCharacterPick(c.id)}
-                        className={`p-3 rounded-xl border-2 text-center transition-all ${
-                          isPicked
-                            ? 'border-jumbo-yellow bg-yellow-50'
-                            : 'border-border hover:border-jumbo-pink bg-white'
-                        }`}
-                      >
-                        <div className="flex justify-center mb-1">
-                          <motion.div
-                            animate={isPicked ? { y: [0, -2, 0] } : {}}
-                            transition={{ duration: 1.5, repeat: Infinity }}
-                          >
-                            <c.Face size={48} team={mySlot?.team || 'red'} />
-                          </motion.div>
-                        </div>
-                        <div className="font-bold text-sm">{c.name}</div>
-                        <div className="text-[10px] text-muted-foreground leading-tight">
-                          {info.abilityName === 'No active ability' ? info.stats.passive : `⚡ ${info.abilityName}`}
-                        </div>
-                      </motion.button>
-                    </Tooltip>
-                  )
-                })}
-              </div>
-              {/* Collapsible guides */}
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {/* Character guide (no selection needed — mixed pieces like chess) */}
+            <Card className="p-4 md:col-span-2">
+              <h2 className="font-bold mb-2 flex items-center gap-2 text-sm">
+                <span>♟️</span> Your Army
+                <span className="text-xs font-normal text-muted-foreground">
+                  — you get a mix of all 4 types (like chess)
+                </span>
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <CharacterCodex team={mySlot?.team || 'red'} />
                 <PowerUpLegend />
               </div>
