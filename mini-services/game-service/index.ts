@@ -1103,6 +1103,7 @@ io.on('connection', (socket) => {
     if (!state) return
     const slot = state.players.find(p => p.id === socket.id)
     if (!slot?.isHost) return
+    // Full reset per GAME_CODEX.md section 7
     state.phase = 'lobby'
     state.players.forEach(p => { p.ready = false; p.captures = 0; p.score = 0 })
     state.board = createBoard(state.mode, state.players)
@@ -1110,6 +1111,15 @@ io.on('connection', (socket) => {
     state.endedAt = undefined
     state.boss = undefined
     state.emoteLog = []
+    state.turnCount = 0
+    state.turnsWithoutCapture = 0
+    state.chaosCount = 0
+    state.currentTurnTeam = 'red'
+    state.currentPlayerIndex = 0
+    state.turnStartedAt = 0
+    state.movesThisTurn = 0
+    state.nextChaosAt = 0
+    state.pendingChaosEvent = undefined
     state.version += 1
     broadcastRoom(meta.roomCode)
   })

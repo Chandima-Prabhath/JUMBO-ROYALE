@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { PowerUpIcon } from '@/components/game/assets'
 import { PieceVisual } from '@/components/game/PieceVisual'
@@ -333,12 +333,7 @@ export function TutorialMode({ onExit }: { onExit: () => void }) {
             </div>
           )}
 
-          {/* Piece */}
-          {piece && (
-            <div className="absolute inset-0 flex items-center justify-center p-0.5">
-              <PieceVisual piece={piece} size={36} selected={!!isSelected} isMine={piece.team === 'red'} />
-            </div>
-          )}
+          {/* Pieces are rendered in the overlay below — NOT here */}
 
           {/* Move target */}
           {move && !piece && (
@@ -371,26 +366,48 @@ export function TutorialMode({ onExit }: { onExit: () => void }) {
     )
   }
 
-  // Pieces overlay for animation
+  // Pieces overlay — uses framer-motion jump arc animation (same as real game)
   const pieceOverlay = Object.values(board.pieces).map(piece => {
     const { x, y } = posToXY(piece.row, piece.col)
     const isSelected = piece.id === selectedPieceId
+    const animKey = `${x.toFixed(1)}_${y.toFixed(1)}`
     return (
-      <div
+      <motion.div
         key={piece.id}
-        className="absolute pointer-events-none transition-all duration-500 ease-out"
-        style={{
+        initial={false}
+        animate={{
           left: `${x}%`,
           top: `${y}%`,
+        }}
+        transition={{
+          left: { type: 'tween', duration: 0.5, ease: 'easeInOut' },
+          top: { type: 'tween', duration: 0.5, ease: 'easeInOut' },
+        }}
+        className="absolute pointer-events-none"
+        style={{
           width: `${cellPct}%`,
           height: `${cellPct}%`,
           zIndex: isSelected ? 20 : 10,
         }}
       >
-        <div className="w-full h-full flex items-center justify-center p-0.5">
-          <PieceVisual piece={piece} size={36} selected={!!isSelected} isMine={piece.team === 'red'} />
-        </div>
-      </div>
+        <motion.div
+          key={animKey}
+          className="w-full h-full"
+          initial={{ y: 0 }}
+          animate={{ y: [0, -30, 0] }}
+          transition={{
+            y: {
+              duration: 0.5,
+              ease: 'easeOut',
+              times: [0, 0.5, 1],
+            },
+          }}
+        >
+          <div className="w-full h-full flex items-center justify-center p-0.5">
+            <PieceVisual piece={piece} size={36} selected={!!isSelected} isMine={piece.team === 'red'} />
+          </div>
+        </motion.div>
+      </motion.div>
     )
   })
 

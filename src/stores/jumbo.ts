@@ -141,7 +141,24 @@ export const useJumbo = create<JumboStore>((set, get) => ({
         }
       }
       // No piece movement (turn change, ready state, etc.) — apply immediately
-      set({ state })
+      // If transitioning to lobby (restart), clear all client-side game state
+      if (state.phase === 'lobby' && prev && prev.phase !== 'lobby') {
+        set({
+          state,
+          selectedPieceId: null,
+          legalMoves: [],
+          lastMove: null,
+          moveLog: [],
+          botThinking: null,
+          turnSkipped: null,
+          bonusMove: null,
+          powerupCollected: null,
+          _stateQueue: [],
+          _processingQueue: false,
+        })
+      } else {
+        set({ state })
+      }
     })
     socket.on('error', (err) => {
       set({ error: err })
