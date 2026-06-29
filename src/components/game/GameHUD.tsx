@@ -25,7 +25,8 @@ function formatTime(ms: number) {
 }
 
 export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: { pieceId: string; targets: { row: number; col: number }[] } | null) => void }) {
-  const { state, myPlayerId, selectedPieceId, legalMoves, useAbility, sendEmote, lastEmotes, pendingChaos, bonusMove, botThinking } = useJumbo()
+  const { state, myPlayerId, selectedPieceId, legalMoves, useAbility, sendEmote, lastEmotes, pendingChaos, bonusMove } = useJumbo()
+  const botThinking = useJumbo(s => s.botThinking)
   const [emoteOpen, setEmoteOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   const [now, setNow] = useState(Date.now())
@@ -41,6 +42,12 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
   useEffect(() => {
     onAbilityModeChange(abilityMode)
   }, [abilityMode, onAbilityModeChange])
+
+  // Compute isMyTurn early (before effects that depend on it)
+  const mySlot = state?.players.find(p => p.id === myPlayerId)
+  const isMyTurn = state
+    ? state.players[state.currentPlayerIndex]?.id === myPlayerId && state.currentTurnTeam === mySlot?.team
+    : false
 
   // Clear ability mode when selected piece is cleared or changes
   useEffect(() => {
@@ -70,8 +77,6 @@ export function GameHUD({ onAbilityModeChange }: { onAbilityModeChange: (mode: {
 
   if (!state) return null
 
-  const mySlot = state.players.find(p => p.id === myPlayerId)
-  const isMyTurn = state.players[state.currentPlayerIndex]?.id === myPlayerId && state.currentTurnTeam === mySlot?.team
   const selectedPiece = selectedPieceId ? state.board.pieces[selectedPieceId] : null
   const canUseSelectedAbility = selectedPiece && canUseAbility(selectedPiece) && isMyTurn && selectedPiece.team === mySlot?.team
   const abilityTargets = canUseSelectedAbility ? getAbilityTargets(state.board, selectedPiece) : []

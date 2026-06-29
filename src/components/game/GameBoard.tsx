@@ -43,13 +43,16 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
     return new Set(abilityMode.targets.map(t => `${t.row}_${t.col}`))
   }, [abilityMode])
 
-  if (!state || !board) return null
-
-  const mySlot = state.players.find(p => p.id === myPlayerId)
+  // Derive turn state early to avoid TDZ issues
+  const mySlot = state?.players.find(p => p.id === myPlayerId)
   const myTeam = mySlot?.team
-  const isMyTurn = state.mode === 'pvp'
-    ? state.players[state.currentPlayerIndex]?.id === myPlayerId
-    : state.currentTurnTeam === 'red' && myTeam === 'red' && state.players[state.currentPlayerIndex]?.id === myPlayerId
+  const isMyTurn = state
+    ? state.mode === 'pvp'
+      ? state.players[state.currentPlayerIndex]?.id === myPlayerId
+      : state.currentTurnTeam === 'red' && myTeam === 'red' && state.players[state.currentPlayerIndex]?.id === myPlayerId
+    : false
+
+  if (!state || !board) return null
 
   const handleCellClick = (row: number, col: number) => {
     const piece = pieceByPos[`${row}_${col}`]
@@ -164,14 +167,9 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
             </div>
           )}
 
-          {/* Piece — uses layout animation for smooth movement */}
+          {/* Piece */}
           {piece && (
-            <motion.div
-              layout
-              layoutId={`piece-${piece.id}`}
-              className="absolute inset-0 flex items-center justify-center p-0.5"
-              transition={{ type: 'spring', stiffness: 350, damping: 32, mass: 0.8 }}
-            >
+            <div className="absolute inset-0 flex items-center justify-center p-0.5">
               <PieceVisual
                 piece={piece}
                 size={Math.min(40, 38)}
@@ -180,7 +178,7 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
                 isMyTurn={isMyTurn}
                 isMine={piece.team === myTeam}
               />
-            </motion.div>
+            </div>
           )}
 
           {/* Move target */}
