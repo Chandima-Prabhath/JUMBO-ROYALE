@@ -28,6 +28,10 @@ export function PieceVisual({
   const Face = FACES[piece.character]
   const faceSize = Math.floor(size * 1.0)
 
+  // Team colors for the base ring — strong, distinct colors
+  const teamRingColor = piece.team === 'red' ? '#ff4fa3' : piece.team === 'blue' ? '#4f7bff' : '#9b59b6'
+  const teamRingGlow = piece.team === 'red' ? 'rgba(255, 79, 163, 0.4)' : piece.team === 'blue' ? 'rgba(79, 123, 255, 0.4)' : 'rgba(155, 89, 182, 0.4)'
+
   return (
     <motion.div
       className="relative flex items-center justify-center"
@@ -36,6 +40,16 @@ export function PieceVisual({
       transition={{ type: 'spring', stiffness: 400, damping: 25 }}
       style={{ width: size, height: size }}
     >
+      {/* Team-colored base ring — always visible for team identification */}
+      <div
+        className="absolute rounded-full"
+        style={{
+          inset: -2,
+          background: `linear-gradient(135deg, ${teamRingColor}, ${teamRingColor}dd)`,
+          boxShadow: `0 2px 8px ${teamRingGlow}`,
+        }}
+      />
+
       {/* Outer ring (selection / highlight / my-turn pulse) */}
       <div
         className="absolute inset-0 rounded-full transition-all"
@@ -47,6 +61,7 @@ export function PieceVisual({
             : isMyTurn && isMine
             ? '0 0 0 2px rgba(255, 210, 63, 0.6), 0 0 12px rgba(255, 210, 63, 0.3)'
             : 'none',
+          zIndex: 2,
         }}
       />
 
@@ -63,7 +78,9 @@ export function PieceVisual({
       />
 
       {/* Face SVG */}
-      <Face size={faceSize} team={piece.team} />
+      <div className="relative z-10">
+        <Face size={faceSize} team={piece.team} />
+      </div>
 
       {/* King crown */}
       {piece.isKing && (

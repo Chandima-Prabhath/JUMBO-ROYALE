@@ -6,15 +6,6 @@ import { Piece, Move, PowerUpType } from '@/game/types'
 import { useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
-const POWERUP_LABEL: Record<PowerUpType, string> = {
-  double_move: 'Double Move',
-  freeze: 'Freeze',
-  swap: 'Swap',
-  bomb: 'Bomb',
-  shield: 'Shield',
-  extra_jump: 'Extra Jump',
-}
-
 export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; targets: { row: number; col: number }[] } | null }) {
   const { state, selectedPieceId, legalMoves, selectPiece, requestMoves, makeMove, useAbility: triggerAbility, myPlayerId, lastMove } = useJumbo()
 
@@ -254,31 +245,21 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
   }
 
   // Build the pieces overlay — each piece is absolutely positioned by percentage
-  // and animated with framer-motion when its position changes
+  // and animated with framer-motion when its position changes.
+  // Uses a jump arc: piece lifts up, moves horizontally, lands — like chess pieces.
   const pieceOverlay = Object.values(pieces).map(piece => {
     const { x, y } = posToXY(piece.row, piece.col)
     const isSelected = piece.id === selectedPieceId
     const move = moveTargets[`${piece.row}_${piece.col}`]
     return (
-      <motion.div
+      <JumpingPiece
         key={piece.id}
-        initial={false}
-        animate={{
-          left: `${x}%`,
-          top: `${y}%`,
-        }}
-        transition={{
-          type: 'spring',
-          stiffness: 120,
-          damping: 18,
-          mass: 1,
-        }}
-        className="absolute pointer-events-none"
-        style={{
-          width: `${cellPct}%`,
-          height: `${cellPct}%`,
-          zIndex: isSelected ? 20 : 10,
-        }}
+        pieceId={piece.id}
+        x={x}
+        y={y}
+        cellPct={cellPct}
+        isSelected={isSelected}
+        zIndex={isSelected ? 20 : 10}
       >
         <div className="w-full h-full flex items-center justify-center p-0.5">
           <PieceVisual
@@ -290,7 +271,7 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
             isMine={piece.team === myTeam}
           />
         </div>
-      </motion.div>
+      </JumpingPiece>
     )
   })
 
@@ -322,5 +303,75 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
         </div>
       </div>
     </div>
+  )
+}
+
+// =========================================================================
+// JumpingPiece — animates a piece moving from old position to new position
+// with a parabolic jump arc (lifts up, moves horizontally, lands).
+// Like a chess piece being picked up and placed down.
+// =========================================================================
+function JumpingPiece({
+  pieceId,
+  x,
+  y,
+  cellPct,
+  isSelected,
+  zIndex,
+  children,
+}: {
+  pieceId: string
+  x: number
+  y: number
+  cellPct: number
+  isSelected: boolean
+  zIndex: number
+  children: React.ReactNode
+}) {
+  // Fixed jump height — avoids needing to track previous position
+  const jumpHeight = 30 // pixels
+
+  // Use a key that changes when position changes — this forces the inner
+  // motion.div to re-mount and replay its jump animation
+  const animKey = `${x.toFixed(1)}_${y.toFixed(1)}`
+
+  return (
+    <motion.div
+      key={pieceId}
+      initial={false}
+      animate={{
+        left: `${x}%`,
+        top: `${y}%`,
+      }}
+      transition={{
+        left: { type: 'tween', duration: 0.5, ease: 'easeInOut' },
+        top: { type: 'tween', duration: 0.5, ease: 'easeInOut' },
+      }}
+      className="absolute pointer-events-none"
+      style={{
+        width: `${cellPct}%`,
+        height: `${cellPct}%`,
+        zIndex,
+      }}
+    >
+      {/* Inner div that does the jump arc — re-mounts when position changes */}
+      <motion.div
+        key={animKey}
+        className="w-full h-full"
+        initial={{ y: 0 }}
+        animate={{
+          y: [0, -jumpHeight, 0],
+        }}
+        transition={{
+          y: {
+            duration: 0.5,
+            ease: 'easeOut',
+            times: [0, 0.5, 1],
+          },
+        }}
+      >
+        {children}
+      </motion.div>
+    </motion.div>
   )
 }

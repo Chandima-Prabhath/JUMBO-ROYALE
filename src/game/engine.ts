@@ -307,30 +307,7 @@ export function applyPowerUpEffect(
       break
     }
   }
-  void cells // unused but kept for future tile-based effects
   return effects
-}
-
-// Apply a power-up to a piece
-export function applyPowerUp(piece: Piece, powerUp: Piece['character'] extends never ? never : any): Piece {
-  const p = { ...piece }
-  switch (powerUp) {
-    case 'shield':
-      p.hasShield = true
-      break
-    case 'extra_jump':
-      // caller handles (allows another move)
-      break
-    case 'double_move':
-      // caller handles
-      break
-    case 'freeze':
-    case 'swap':
-    case 'bomb':
-      // These need a target — handled by caller through special action
-      break
-  }
-  return p
 }
 
 // Character abilities

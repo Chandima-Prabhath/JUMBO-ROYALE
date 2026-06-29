@@ -282,8 +282,20 @@ function runBotMove(state: GameState, botPlayerId: string) {
       }
       state.version += 1
       broadcastRoom(state.roomCode)
-      // After ability, still make a move
-      setTimeout(() => runBotMove(state, botPlayerId), 600)
+      // Ability use ENDS the turn — no additional move.
+      // (Chain captures are handled by runBotChainCapture if the ability led to a capture position)
+      if (piece.character === 'mage') {
+        // Check for chain captures from new position
+        const followUps = getLegalMoves(state.board, piece).filter(m => m.kind === 'capture' || m.kind === 'multi_capture')
+        if (followUps.length > 0) {
+          setTimeout(() => runBotChainCapture(state, botPlayerId, piece.id), 600)
+          return
+        }
+      }
+      setTimeout(() => {
+        nextTurn(state)
+        broadcastRoom(state.roomCode)
+      }, 600)
       return
     }
   }
@@ -1021,15 +1033,19 @@ io.on('connection', (socket) => {
         io.to(state.roomCode).emit('chain:available', { pieceId, moves: followUps })
         return
       }
-      // double_move/extra_jump bonus
+      // double_move/extra_jump bonus — ability + bonus move = 2 actions, then turn ends
       if (pickedUpPowerUp === 'double_move' || pickedUpPowerUp === 'extra_jump') {
         state.turnStartedAt = Date.now()
         io.to(state.roomCode).emit('bonus_move', { pieceId, powerUp: pickedUpPowerUp })
         return
       }
     }
-    // Ability use doesn't end turn — player can still move normally after.
-    // The turn timer continues; player must make a normal move to end their turn.
+    // Ability use ENDS the turn — using your special power is your action for this turn.
+    // This prevents mage from teleporting AND moving in the same turn (too strong).
+    setTimeout(() => {
+      nextTurn(state)
+      broadcastRoom(state.roomCode)
+    }, 400)
   })
 
   socket.on('emote', ({ emoji, targetPieceId }: { emoji: string; targetPieceId?: string }) => {
