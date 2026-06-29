@@ -72,29 +72,72 @@ function placePiecesForTeam(
   endRow: number, // exclusive
 ) {
   if (players.length === 0) return
-  // Distribute pieces across dark cells in the startRow..endRow-1 range
+  // Collect all dark cell slots in the row range
   const slots: { r: number; c: number }[] = []
   for (let r = startRow; r < endRow; r++) {
     for (let c = 0; c < BOARD_SIZE; c++) {
       if (cells[r][c].tile === 'dark') slots.push({ r, c })
     }
   }
-  // shuffle
-  for (let i = slots.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[slots[i], slots[j]] = [slots[j], slots[i]]
+  // Sort slots: back row first (so Tanks go in back), front row last (Speedsters go in front)
+  // For red team (rows 6-7): row 7 is back, row 6 is front
+  // For blue team (rows 0-1): row 0 is back, row 1 is front
+  slots.sort((a, b) => {
+    // Back row has higher row number for red, lower for blue
+    const backRow = team === 'red' ? Math.max(startRow, endRow - 1) : Math.min(startRow, endRow - 1)
+    const aDist = Math.abs(a.r - backRow)
+    const bDist = Math.abs(b.r - backRow)
+    return aDist - bDist // closer to back = first
+  })
+
+  // Build the piece composition: chess-like mix
+  // Each player gets 8 pieces (or fewer if not enough slots):
+  // - 2 Tanks (back row, defensive)
+  // - 2 Speedsters (front row, aggressive)
+  // - 2 Mages (middle)
+  // - 1 Jester (wildcard)
+  // - 1 of player's chosen character (makes the choice meaningful)
+  const allChars: CharacterClass[] = []
+  const piecesPerPlayer = Math.max(4, Math.floor(slots.length / players.length))
+  for (const player of players) {
+    const composition = buildComposition(piecesPerPlayer, player.character)
+    allChars.push(...composition)
   }
 
-  // Each player gets equal share of pieces (min 4 each for 4-player team)
-  const piecesPerPlayer = Math.max(4, Math.floor(slots.length / players.length))
+  // Assign characters to slots (back to front)
   let slotIdx = 0
-  for (const player of players) {
-    for (let i = 0; i < piecesPerPlayer && slotIdx < slots.length; i++) {
-      const { r, c } = slots[slotIdx++]
-      const id = `p_${uuid().slice(0, 8)}`
-      pieces[id] = makePiece(id, team, player.character, r, c, player.name, player.avatar)
+  let playerIdx = 0
+  let pieceInPlayer = 0
+  for (let i = 0; i < allChars.length && slotIdx < slots.length; i++) {
+    const char = allChars[i]
+    const player = players[playerIdx]
+    const { r, c } = slots[slotIdx++]
+    const id = `p_${uuid().slice(0, 8)}`
+    pieces[id] = makePiece(id, team, char, r, c, player.name, player.avatar)
+    pieceInPlayer++
+    if (pieceInPlayer >= piecesPerPlayer) {
+      playerIdx++
+      pieceInPlayer = 0
     }
   }
+}
+
+// Build a chess-like composition of characters for a player.
+// The player's chosen character gets 1 extra (majority).
+function buildComposition(total: number, playerChoice: CharacterClass): CharacterClass[] {
+  // Base composition: 2 Tank, 2 Speedster, 2 Mage, 1 Jester = 7
+  // + 1 of player's choice = 8 total
+  const base: CharacterClass[] = ['tank', 'tank', 'speedster', 'speedster', 'mage', 'mage', 'jester']
+  const composition = [...base, playerChoice]
+  // If total < 8, trim from the end
+  if (total < composition.length) {
+    return composition.slice(0, total)
+  }
+  // If total > 8, add more of player's choice
+  while (composition.length < total) {
+    composition.push(playerChoice)
+  }
+  return composition
 }
 
 function placeBossPieces(cells: Cell[][], pieces: Record<string, Piece>) {

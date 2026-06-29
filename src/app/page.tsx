@@ -15,6 +15,7 @@ import { AnimalAvatar, TankFace, SpeedsterFace, MageFace, JesterFace, Sparkle } 
 import { ConfettiBurst } from '@/components/game/Effects'
 import { PowerUpCollectedPopup, BonusMoveBanner } from '@/components/game/Codex'
 import { MoveLogPanel } from '@/components/game/MoveLogPanel'
+import { TutorialMode } from '@/components/game/TutorialMode'
 import { copyToClipboard } from '@/lib/clipboard'
 import { toast } from 'sonner'
 
@@ -28,6 +29,7 @@ export default function Home() {
   })
   const [joinCode, setJoinCode] = useState('')
   const [abilityMode, setAbilityMode] = useState<{ pieceId: string; targets: { row: number; col: number }[] } | null>(null)
+  const [showTutorial, setShowTutorial] = useState(false)
 
   useEffect(() => {
     init()
@@ -62,6 +64,8 @@ export default function Home() {
     }
     useJumbo.getState().createRoom(name.trim(), mode)
   }
+
+  if (showTutorial) return <TutorialMode onExit={() => setShowTutorial(false)} />
 
   const handleJoin = () => {
     if (!connected) {
@@ -432,22 +436,32 @@ export default function Home() {
           </Card>
         </motion.div>
 
-        {/* How to play */}
+        {/* Tutorial + Quick Start */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.5 }}
+          className="flex flex-col gap-3"
         >
-          <Card className="p-4" style={{ border: '3px solid #1a0d2e', boxShadow: '0 6px 0 #0a0418' }}>
-            <h2 className="font-bold mb-2 flex items-center gap-2"><span>📖</span> How to play</h2>
-            <ul className="text-sm space-y-1.5 text-muted-foreground">
-              <li className="flex gap-2"><span className="text-jumbo-pink font-bold">1.</span><span>Create a room or join with a 4-letter code</span></li>
-              <li className="flex gap-2"><span className="text-jumbo-pink font-bold">2.</span><span>Pick your team & character class</span></li>
-              <li className="flex gap-2"><span className="text-jumbo-pink font-bold">3.</span><span>Tap your piece, then tap a green tile to move</span></li>
-              <li className="flex gap-2"><span className="text-jumbo-pink font-bold">4.</span><span>Jump enemies to capture them (chains = combo!)</span></li>
-              <li className="flex gap-2"><span className="text-jumbo-pink font-bold">5.</span><span>Reach the far row to become a King 👑</span></li>
-              <li className="flex gap-2"><span className="text-jumbo-pink font-bold">6.</span><span>Grab power-ups for chaos! Every 60s board flips 🎲</span></li>
-            </ul>
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => setShowTutorial(true)}
+            className="w-full py-4 rounded-2xl font-bold text-lg flex items-center justify-center gap-2"
+            style={{
+              background: 'linear-gradient(135deg, #9b59b6, #6b3aa0)',
+              color: 'white',
+              border: '3px solid #1a0d2e',
+              boxShadow: '0 6px 0 #4a2670, 0 10px 20px rgba(0,0,0,0.2)',
+            }}
+          >
+            📖 Interactive Tutorial
+          </motion.button>
+          <Card className="p-4" style={{ border: '3px solid #1a0d2e', boxShadow: '0 4px 0 #0a0418' }}>
+            <h2 className="font-bold mb-2 flex items-center gap-2 text-sm">⚡ Quick Start</h2>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Create or join a room → Pick team & character → Tap your piece → Tap green tile to move → Jump enemies to capture → Reach far row for King 👑 → Grab power-ups for chaos!
+            </p>
           </Card>
         </motion.div>
       </main>

@@ -497,7 +497,7 @@ function runBotChainCapture(state: GameState, botPlayerId: string, pieceId: stri
   if (movedPiece) {
     const more = getLegalMoves(state.board, movedPiece).filter(m => m.kind === 'capture' || m.kind === 'multi_capture')
     if (more.length > 0) {
-      setTimeout(() => runBotChainCapture(state, botPlayerId, pieceId), 500)
+      setTimeout(() => runBotChainCapture(state, botPlayerId, pieceId), 600)
       return
     }
   }

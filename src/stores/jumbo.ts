@@ -40,6 +40,10 @@ interface JumboStore {
   sendEmote: (emoji: string, targetPieceId?: string) => void
   sendChat: (text: string) => void
   clearError: () => void
+  _enqueueState: (state: GameState) => void
+  _processStateQueue: () => void
+  _stateQueue: GameState[]
+  _processingQueue: boolean
 }
 
 export const useJumbo = create<JumboStore>((set, get) => ({
@@ -60,6 +64,8 @@ export const useJumbo = create<JumboStore>((set, get) => ({
   moveLog: [],
   botThinking: null,
   turnSkipped: null,
+  _stateQueue: [],
+  _processingQueue: false,
 
   init: () => {
     if (get().connected) return
@@ -96,24 +102,45 @@ export const useJumbo = create<JumboStore>((set, get) => ({
         const prevPieceCount = Object.keys(prev.board.pieces).length
         const newPieceCount = Object.keys(state.board.pieces).length
         if (newPieceCount < prevPieceCount) {
-          // Was it a multi-capture? Check score increase
           const captured = prevPieceCount - newPieceCount
           if (captured >= 2) playSfx('multi_capture')
           else playSfx('capture')
         } else if (newPieceCount === prevPieceCount && state.version > prev.version + 0 && state.movesThisTurn > prev.movesThisTurn) {
-          // A move was made (no capture)
           playSfx('move')
         }
-        // Boss rage
         if (state.boss && prev.boss && !prev.boss.rage && state.boss.rage) {
           playSfx('boss_rage')
         }
-        // Player count change
         const prevConnected = prev.players.filter(p => p.connected).length
         const newConnected = state.players.filter(p => p.connected).length
         if (newConnected > prevConnected) playSfx('join')
         else if (newConnected < prevConnected) playSfx('leave')
       }
+      // Animation queue: if a piece moved, delay applying the state so the
+      // JumpingPiece animation can play. Queue subsequent states.
+      const prevForAnim = get().state
+      if (prevForAnim && state.phase === 'playing' && prevForAnim.phase === 'playing') {
+        // Check if any piece position changed
+        let pieceMoved = false
+        for (const [id, p] of Object.entries(state.board.pieces)) {
+          const prevP = prevForAnim.board.pieces[id]
+          if (prevP && (prevP.row !== p.row || prevP.col !== p.col)) {
+            pieceMoved = true
+            break
+          }
+        }
+        // Also check if pieces were removed (captures)
+        const prevCount = Object.keys(prevForAnim.board.pieces).length
+        const newCount = Object.keys(state.board.pieces).length
+        const piecesRemoved = newCount < prevCount
+
+        if (pieceMoved || piecesRemoved) {
+          // Queue this state — apply after animation delay
+          get()._enqueueState(state)
+          return
+        }
+      }
+      // No piece movement (turn change, ready state, etc.) — apply immediately
       set({ state })
     })
     socket.on('error', (err) => {
@@ -313,4 +340,31 @@ export const useJumbo = create<JumboStore>((set, get) => ({
   },
 
   clearError: () => set({ error: null }),
+
+  _enqueueState: (state) => {
+    // Add to queue
+    const queue = get()._stateQueue || []
+    queue.push(state)
+    set({ _stateQueue: queue })
+    // If not already processing, start processing
+    if (!get()._processingQueue) {
+      get()._processStateQueue()
+    }
+  },
+
+  _processStateQueue: () => {
+    const queue = get()._stateQueue || []
+    if (queue.length === 0) {
+      set({ _processingQueue: false })
+      return
+    }
+    set({ _processingQueue: true })
+    // Apply the next state
+    const next = queue.shift()
+    set({ _stateQueue: queue, state: next })
+    // Wait for animation to play before processing next
+    setTimeout(() => {
+      get()._processStateQueue()
+    }, 550) // matches the 0.5s animation duration + small buffer
+  },
 }))
