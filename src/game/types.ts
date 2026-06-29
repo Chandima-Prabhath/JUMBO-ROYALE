@@ -16,11 +16,12 @@ export type PowerUpType =
   | 'extra_jump'   // 🔁 keep jumping after non-capture move
 
 export type ChaosEvent =
-  | 'gravity_flip' // board rotates 180 visually; rows swap
+  | 'gravity_flip' // (disabled — breaks pawn movement)
   | 'ice_age'      // all pieces slide one extra square in last direction
   | 'shrink'       // outer ring becomes blocked for 3 turns
   | 'double_trouble' // every capture counts as 2
   | 'frenzy'       // everyone moves twice this round
+  | 'power_rain'   // new power-ups spawn on random dark cells
 
 export interface Piece {
   id: string

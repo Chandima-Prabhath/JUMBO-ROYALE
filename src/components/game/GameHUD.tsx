@@ -18,6 +18,7 @@ const CHAOS_INFO: Record<ChaosEvent, { label: string; desc: string; emoji: strin
   shrink: { label: 'SHRINK', desc: 'Outer ring blocked!', emoji: '📦' },
   double_trouble: { label: 'DOUBLE TROUBLE', desc: 'Captures count double!', emoji: '💥' },
   frenzy: { label: 'FRENZY', desc: 'Everyone moves twice!', emoji: '⚡' },
+  power_rain: { label: 'POWER RAIN', desc: 'New power-ups spawned!', emoji: '🎁' },
 }
 
 function formatTime(ms: number) {

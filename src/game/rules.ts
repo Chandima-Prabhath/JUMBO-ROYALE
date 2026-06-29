@@ -1,5 +1,5 @@
 // Jumbo Royale - Win conditions, chaos events, helpers
-import { GameState, Board, AnyTeam, ChaosEvent, Piece } from './types'
+import { GameState, Board, AnyTeam, ChaosEvent, Piece, PowerUpType } from './types'
 import { getTeamMoves } from './engine'
 import { getPieceAt } from './board'
 
@@ -26,8 +26,11 @@ export function checkWinner(state: GameState): AnyTeam | undefined {
   }
 }
 
+// NOTE: 'gravity_flip' was removed because it breaks pawn movement — after
+// flipping the board, pawns' forward direction points them off the board.
+// Replaced with 'power_rain' which spawns new power-ups instead.
 const CHAOS_EVENTS: ChaosEvent[] = [
-  'gravity_flip', 'ice_age', 'shrink', 'double_trouble', 'frenzy',
+  'ice_age', 'shrink', 'double_trouble', 'frenzy', 'power_rain',
 ]
 
 export function rollChaosEvent(): ChaosEvent {
@@ -74,6 +77,31 @@ export function applyChaos(state: GameState, event: ChaosEvent): GameState {
     case 'frenzy':
       // These affect gameplay rules transiently — handled in turn logic
       break
+    case 'power_rain': {
+      // Spawn 4 new power-ups on random empty dark cells
+      const size = newState.board.size
+      const emptyDarkCells: { r: number; c: number }[] = []
+      for (let r = 2; r < size - 2; r++) {
+        for (let c = 0; c < size; c++) {
+          const cell = newState.board.cells[r][c]
+          if (cell.tile === 'dark' && cell.type === 'normal' && !getPieceAt(newState.board, r, c)) {
+            emptyDarkCells.push({ r, c })
+          }
+        }
+      }
+      // Shuffle and pick 4
+      for (let i = emptyDarkCells.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[emptyDarkCells[i], emptyDarkCells[j]] = [emptyDarkCells[j], emptyDarkCells[i]]
+      }
+      const POWERUP_POOL: PowerUpType[] = ['double_move', 'freeze', 'swap', 'bomb', 'shield', 'extra_jump']
+      for (let i = 0; i < Math.min(4, emptyDarkCells.length); i++) {
+        const { r, c } = emptyDarkCells[i]
+        newState.board.cells[r][c].type = 'powerup'
+        newState.board.cells[r][c].powerUp = POWERUP_POOL[Math.floor(Math.random() * POWERUP_POOL.length)]
+      }
+      break
+    }
   }
   newState.chaosCount += 1
   newState.version += 1

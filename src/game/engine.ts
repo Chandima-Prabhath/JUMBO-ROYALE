@@ -68,7 +68,10 @@ function exploreCaptures(
   out: Move[],
 ) {
   let foundExtension = false
-  for (const [dr, dc] of allowedDirections(current)) {
+  // Captures can be made in ANY diagonal direction (forward AND backward)
+  // even for non-king pieces. This is standard checkers rules and prevents
+  // kings from being uncatchable.
+  for (const [dr, dc] of DIAGS) {
     const midR = current.row + dr
     const midC = current.col + dc
     const landR = current.row + dr * 2

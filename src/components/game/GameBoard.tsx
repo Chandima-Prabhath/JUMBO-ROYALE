@@ -43,7 +43,7 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
     return new Set(abilityMode.targets.map(t => `${t.row}_${t.col}`))
   }, [abilityMode])
 
-  // Derive turn state early to avoid TDZ issues
+  // Compute turn state early (before effects that depend on it)
   const mySlot = state?.players.find(p => p.id === myPlayerId)
   const myTeam = mySlot?.team
   const isMyTurn = state
@@ -88,6 +88,14 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
     selectPiece(null)
   }
 
+  // Cell percentage: each cell is 100/size % of the board
+  const cellPct = 100 / size
+  // Convert (row, col) to (x%, y%) — render in reverse so row 0 is at bottom
+  const posToXY = (row: number, col: number) => ({
+    x: col * cellPct,
+    y: (size - 1 - row) * cellPct, // flip so row 0 is at bottom
+  })
+
   const rows = []
   // Render in reverse so red (row 0) appears at bottom
   for (let r = size - 1; r >= 0; r--) {
@@ -98,7 +106,6 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
       const move = moveTargets[`${r}_${c}`]
       const isAbilityTarget = abilityTargetSet.has(`${r}_${c}`)
       const isSelected = piece && piece.id === selectedPieceId
-      // Last move highlight
       const isLastMoveFrom = lastMove && lastMove.fromRow === r && lastMove.fromCol === c
       const isLastMoveTo = lastMove && lastMove.toRow === r && lastMove.toCol === c
 
@@ -167,20 +174,6 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
             </div>
           )}
 
-          {/* Piece */}
-          {piece && (
-            <div className="absolute inset-0 flex items-center justify-center p-0.5">
-              <PieceVisual
-                piece={piece}
-                size={Math.min(40, 38)}
-                selected={!!isSelected}
-                highlight={!!move && piece.team !== myTeam}
-                isMyTurn={isMyTurn}
-                isMine={piece.team === myTeam}
-              />
-            </div>
-          )}
-
           {/* Move target */}
           <AnimatePresence>
             {move && !piece && (
@@ -241,13 +234,11 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
             )}
           </AnimatePresence>
 
-          {/* Capture-move indicator (red ring around target with enemy piece) */}
+          {/* Capture-move indicator */}
           {move && piece && piece.team !== myTeam && (
             <motion.div
               className="absolute inset-1 rounded-lg pointer-events-none"
-              style={{
-                border: '3px dashed #ff5252',
-              }}
+              style={{ border: '3px dashed #ff5252' }}
               animate={{ opacity: [0.5, 1, 0.5] }}
               transition={{ duration: 0.8, repeat: Infinity }}
             />
@@ -261,6 +252,47 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
       </div>,
     )
   }
+
+  // Build the pieces overlay — each piece is absolutely positioned by percentage
+  // and animated with framer-motion when its position changes
+  const pieceOverlay = Object.values(pieces).map(piece => {
+    const { x, y } = posToXY(piece.row, piece.col)
+    const isSelected = piece.id === selectedPieceId
+    const move = moveTargets[`${piece.row}_${piece.col}`]
+    return (
+      <motion.div
+        key={piece.id}
+        initial={false}
+        animate={{
+          left: `${x}%`,
+          top: `${y}%`,
+        }}
+        transition={{
+          type: 'spring',
+          stiffness: 120,
+          damping: 18,
+          mass: 1,
+        }}
+        className="absolute pointer-events-none"
+        style={{
+          width: `${cellPct}%`,
+          height: `${cellPct}%`,
+          zIndex: isSelected ? 20 : 10,
+        }}
+      >
+        <div className="w-full h-full flex items-center justify-center p-0.5">
+          <PieceVisual
+            piece={piece}
+            size={Math.min(40, 38)}
+            selected={!!isSelected}
+            highlight={!!move && piece.team !== myTeam}
+            isMyTurn={isMyTurn}
+            isMine={piece.team === myTeam}
+          />
+        </div>
+      </motion.div>
+    )
+  })
 
   return (
     <div className="relative">
@@ -279,10 +311,16 @@ export function GameBoard({ abilityMode }: { abilityMode: { pieceId: string; tar
         <div className="absolute bottom-1 left-1 w-3 h-3 rounded-full bg-jumbo-yellow opacity-60" />
         <div className="absolute bottom-1 right-1 w-3 h-3 rounded-full bg-jumbo-yellow opacity-60" />
 
-        <div className="flex flex-col gap-1">{rows}</div>
-      </div>
+        <div className="relative">
+          {/* Grid background (cells without pieces) */}
+          <div className="flex flex-col gap-1">{rows}</div>
 
-      {/* Captured-piece indicators could go here in future */}
+          {/* Pieces overlay — absolutely positioned, animated */}
+          <div className="absolute inset-0 pointer-events-none">
+            {pieceOverlay}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

@@ -128,6 +128,10 @@ export default function Home() {
           {/* Right column: HUD panels (desktop) or above board (mobile) */}
           <div className="flex flex-col gap-2 lg:w-[340px] lg:flex-shrink-0 lg:order-1">
             <GameHUD onAbilityModeChange={setAbilityMode} />
+            {/* Move log on desktop (below HUD) */}
+            <div className="hidden lg:block">
+              <MoveLogPanel />
+            </div>
           </div>
         </main>
       </div>

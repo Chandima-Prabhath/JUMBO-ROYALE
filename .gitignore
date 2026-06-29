@@ -67,4 +67,4 @@ server.log
 
 # Docker volumes
 caddy_data/
-caddy_config/
+caddy_config//upload/
