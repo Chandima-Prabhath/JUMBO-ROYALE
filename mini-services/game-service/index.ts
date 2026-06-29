@@ -9,7 +9,8 @@ import {
 import { createBoard, BOARD_SIZE, POWERUP_COUNT } from '../../src/game/board'
 import { TURN_DURATION_SEC, MAX_MOVES_PER_TURN, CHAOS_INTERVAL_SEC } from '../../src/game/turn'
 import { getLegalMoves } from '../../src/game/moves'
-import { applyMove, applyPowerUpEffect } from '../../src/game/apply'
+import { applyMoveCompat } from '../../src/game/apply'
+import { applyPowerUpEffect } from '../../src/game/apply'
 import { getAbilityTargets } from '../../src/game/abilities'
 import { getTeamLegalMoves as getTeamMoves } from '../../src/game/moves'
 import { checkWinner } from '../../src/game/winner'
@@ -339,7 +340,7 @@ function runBotMove(state: GameState, botPlayerId: string) {
   const fromCol = botPieceBefore?.col ?? best.move.toCol
 
   // Apply the move
-  const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMove(state.board, best.move)
+  const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMoveCompat(state.board, best.move, state)
   state.board = board
   if (best.move.capturedPieceIds.length > 0) {
     slot.captures += best.move.capturedPieceIds.length
@@ -448,7 +449,7 @@ function runBotChainCapture(state: GameState, botPlayerId: string, pieceId: stri
   }
   const chainFromRow = piece.row
   const chainFromCol = piece.col
-  const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMove(state.board, best)
+  const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMoveCompat(state.board, best, state)
   state.board = board
   slot.captures += best.capturedPieceIds.length
   slot.score += best.capturedPieceIds.length * 10
@@ -563,7 +564,7 @@ function runBossMoveRecursive(state: GameState, movesRemaining: number, depth: n
     return
   }
 
-  const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMove(state.board, pick.move)
+  const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMoveCompat(state.board, pick.move, state)
   state.board = board
 
   // Update boss HP if the boss piece itself was involved (shouldn't happen, but just in case)
@@ -660,7 +661,7 @@ function runBossChainCapture(state: GameState, pieceId: string, movesRemaining: 
   for (const m of captures) {
     if (m.capturedPieceIds.length > best.capturedPieceIds.length) best = m
   }
-  const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMove(state.board, best)
+  const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMoveCompat(state.board, best, state)
   state.board = board
   if (promotedToKing) io.to(state.roomCode).emit('promote', pieceId)
   if (pickedUpPowerUp) {
@@ -851,6 +852,7 @@ io.on('connection', (socket) => {
     if (!meta) return
     const state = rooms.get(meta.roomCode)
     if (!state || state.phase !== 'playing') return
+    if (!state.board || !state.board.pieces) return
     const piece = state.board.pieces[pieceId]
     if (!piece) return
     const moves = getLegalMoves(state.board, piece)
@@ -891,7 +893,7 @@ io.on('connection', (socket) => {
       return
     }
     // Apply
-    const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMove(state.board, match)
+    const { board, promotedToKing, pickedUpPowerUp, appliedEffects } = applyMoveCompat(state.board, match, state)
     state.board = board
     if (match.capturedPieceIds.length > 0) {
       slot.captures += match.capturedPieceIds.length

@@ -47,6 +47,36 @@ export function validateMove(state: GameState, move: Move): ValidationResult {
 }
 
 // ===========================================================================
+// Compatibility wrapper — old server code calls applyMove(state.board, move)
+// and expects { board, promotedToKing, pickedUpPowerUp, appliedEffects }
+// This wraps the new applyMove(state, move) → ActionResult format.
+// Will be removed once the server is fully migrated to GameEngine.
+// ===========================================================================
+
+export function applyMoveCompat(
+  board: Board,
+  move: Move,
+  state: GameState,
+): {
+  board: Board
+  promotedToKing: boolean
+  pickedUpPowerUp?: PowerUpType
+  appliedEffects: PowerUpEffect[]
+} {
+  const result = applyMove(state, move)
+  if (!result.success || !result.newState) {
+    // Return the original board unchanged on failure
+    return { board, promotedToKing: false, appliedEffects: [] }
+  }
+  return {
+    board: result.newState.board,
+    promotedToKing: result.promotedToKing ?? false,
+    pickedUpPowerUp: result.pickedUpPowerUp,
+    appliedEffects: result.effects ?? [],
+  }
+}
+
+// ===========================================================================
 // Apply move — returns new state + effects, NEVER mutates
 // ===========================================================================
 
