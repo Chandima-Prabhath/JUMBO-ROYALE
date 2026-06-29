@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button'
 import { PowerUpIcon } from '@/components/game/assets'
 import { PieceVisual } from '@/components/game/PieceVisual'
 import { Piece, Board, Cell, CharacterClass } from '@/game/types'
-import { getLegalMoves, applyMove } from '@/game/engine'
+import { getLegalMoves } from '@/game/moves'
+import { applyMove } from '@/game/apply'
 
 // Tutorial steps — each teaches one concept
 type TutorialStep = {

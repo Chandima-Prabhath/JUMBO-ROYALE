@@ -1,385 +1,462 @@
-// Jumbo Royale - Move calculation & rule engine
-import { Board, Piece, Move, AnyTeam, CharacterClass, PowerUpType, Cell } from './types'
-import { getPieceAt, inBounds, getCell } from './board'
+// ===========================================================================
+// Jumbo Royale — GameEngine
+// The SINGLE API for all game operations. Used by server, tutorial, and AI.
+// The engine is the ONLY authority on what's legal.
+// Bots CANNOT make illegal moves because they go through this same API.
+// ===========================================================================
 
-const DIAGS = [
-  [-1, -1], [-1, 1], [1, -1], [1, 1],
-]
+import {
+  GameState, GameMode, GameConfig, PlayerSlot, PlayerConfig,
+  Move, AnyTeam, Position, ActionResult, ValidationResult,
+  PowerUpType, PowerUpEffect, BotDifficulty, ChaosEvent, Piece,
+} from './types'
+import { createBoard, BOARD_SIZE } from './board'
+import { getLegalMoves, getTeamLegalMoves, getCaptureMoves, hasLegalMoves } from './moves'
+import { applyMove, validateMove } from './apply'
+import { applyAbility, validateAbility, getAbilityTargets, canUseAbility } from './abilities'
+import { checkWinner, isAllFrozen } from './winner'
+import { nextTurn, TURN_DURATION_SEC, CHAOS_INTERVAL_SEC, isPlayerTurn, isBotTurn, getCurrentPlayer } from './turn'
+import { v4 as uuid } from 'uuid'
 
-// Direction a piece can move. Classic checkers: forward only until king.
-function allowedDirections(piece: Piece): number[][] {
-  if (piece.isKing) return DIAGS
-  // Red moves "up" (toward row 0). Blue/boss move "down" (toward row N).
-  // In co-op, red humans move up; boss minions move down.
-  const forward = piece.team === 'red' ? -1 : 1
-  return [[forward, -1], [forward, 1]]
-}
+const CHAOS_EVENTS: ChaosEvent[] = ['ice_age', 'shrink', 'double_trouble', 'frenzy', 'power_rain']
 
-// Get all simple (non-capture) moves for a piece
-export function getSimpleMoves(board: Board, piece: Piece): Move[] {
-  if (piece.frozenTurns > 0) return []
-  const moves: Move[] = []
-  for (const [dr, dc] of allowedDirections(piece)) {
-    const r = piece.row + dr
-    const c = piece.col + dc
-    if (!inBounds(r, c)) continue
-    if (getPieceAt(board, r, c)) continue
-    const cell = getCell(board, r, c)
-    if (cell?.type === 'blocked') continue
-    moves.push({
-      pieceId: piece.id,
-      fromRow: piece.row,
-      fromCol: piece.col,
-      toRow: r,
-      toCol: c,
-      kind: 'simple',
-      capturedPieceIds: [],
-      isChainable: false,
-      pickedUpPowerUp: cell?.powerUp,
+// ===========================================================================
+// GameEngine class
+// ===========================================================================
+
+export class GameEngine {
+  private state: GameState
+
+  private constructor(state: GameState) {
+    this.state = state
+  }
+
+  // === Creation ===
+
+  static createGame(config: GameConfig): GameEngine {
+    const players: PlayerSlot[] = config.players.map(p => ({
+      id: p.id,
+      name: p.name.slice(0, 20) || 'Anonymous',
+      avatar: p.avatar,
+      team: p.team,
+      character: p.character,
+      ready: p.isBot ?? false,
+      isHost: p.isHost,
+      isBot: p.isBot,
+      botDifficulty: p.botDifficulty,
+      connected: true,
+      captures: 0,
+      score: 0,
+    }))
+
+    const board = createBoard(config.mode, players)
+    const currentPlayerIndex = players.findIndex(p => p.team === 'red' && p.connected)
+    const bossPiece = Object.values(board.pieces).find(p => p.team === 'boss' && p.isKing)
+
+    const state: GameState = {
+      id: uuid(),
+      roomCode: config.roomCode,
+      mode: config.mode,
+      phase: 'playing',
+      board,
+      players,
+      currentTurnTeam: 'red',
+      currentPlayerIndex: currentPlayerIndex >= 0 ? currentPlayerIndex : 0,
+      turnStartedAt: Date.now(),
+      turnDurationSec: TURN_DURATION_SEC,
+      movesThisTurn: 0,
+      boss: config.mode === 'coop' && bossPiece ? {
+        hp: bossPiece.hp,
+        maxHp: bossPiece.hp,
+        rage: false,
+      } : undefined,
+      nextChaosAt: Date.now() + CHAOS_INTERVAL_SEC * 1000,
+      chaosCount: 0,
+      turnCount: 0,
+      turnsWithoutCapture: 0,
+      version: 1,
+    }
+
+    return new GameEngine(state)
+  }
+
+  static fromState(state: GameState): GameEngine {
+    return new GameEngine({ ...state })
+  }
+
+  static createLobby(mode: GameMode, host: PlayerConfig, roomCode: string): GameEngine {
+    const players: PlayerSlot[] = [{
+      id: host.id,
+      name: host.name.slice(0, 20) || 'Anonymous',
+      avatar: host.avatar,
+      team: 'red',
+      character: host.character,
+      ready: false,
+      isHost: true,
+      isBot: host.isBot,
+      botDifficulty: host.botDifficulty,
+      connected: true,
+      captures: 0,
+      score: 0,
+    }]
+
+    const state: GameState = {
+      id: uuid(),
+      roomCode,
+      mode,
+      phase: 'lobby',
+      board: createBoard(mode, players),
+      players,
+      currentTurnTeam: 'red',
+      currentPlayerIndex: 0,
+      turnStartedAt: 0,
+      turnDurationSec: TURN_DURATION_SEC,
+      movesThisTurn: 0,
+      nextChaosAt: 0,
+      chaosCount: 0,
+      turnCount: 0,
+      turnsWithoutCapture: 0,
+      version: 1,
+    }
+
+    return new GameEngine(state)
+  }
+
+  // === Queries (read-only) ===
+
+  getState(): GameState {
+    return { ...this.state }
+  }
+
+  getLegalMoves(): Move[] {
+    if (this.state.phase !== 'playing') return []
+    const teamMoves = getTeamLegalMoves(this.state.board, this.state.currentTurnTeam)
+    return teamMoves.flatMap(tm => tm.moves)
+  }
+
+  getPieceMoves(pieceId: string): Move[] {
+    const piece = this.state.board.pieces[pieceId]
+    if (!piece) return []
+    return getLegalMoves(this.state.board, piece)
+  }
+
+  getAbilityTargets(pieceId: string): Position[] {
+    const piece = this.state.board.pieces[pieceId]
+    if (!piece) return []
+    return getAbilityTargets(this.state.board, piece)
+  }
+
+  getCurrentPlayer() {
+    return getCurrentPlayer(this.state)
+  }
+
+  isPlayerTurn(playerId: string): boolean {
+    return isPlayerTurn(this.state, playerId)
+  }
+
+  isBotTurn(): boolean {
+    return isBotTurn(this.state)
+  }
+
+  isGameOver(): boolean {
+    return this.state.phase === 'ended'
+  }
+
+  getWinner(): AnyTeam | undefined {
+    return this.state.winnerTeam
+  }
+
+  shouldSkipTurn(): boolean {
+    return isAllFrozen(this.state, this.state.currentTurnTeam)
+  }
+
+  // === Actions (validate + apply) ===
+
+  makeMove(move: Move): ActionResult {
+    if (this.state.phase !== 'playing') {
+      return { success: false, error: 'Game is not in progress' }
+    }
+
+    const result = applyMove(this.state, move)
+    if (!result.success || !result.newState) return result
+
+    this.state = result.newState
+
+    // Update player score for captures
+    if (move.capturedPieceIds.length > 0) {
+      const slot = this.state.players[this.state.currentPlayerIndex]
+      if (slot) {
+        slot.captures += move.capturedPieceIds.length
+        slot.score += move.capturedPieceIds.length * 10
+        if (move.capturedPieceIds.length > 1) slot.score += 20
+      }
+    }
+
+    // Update player score for power-up
+    if (result.pickedUpPowerUp) {
+      const slot = this.state.players[this.state.currentPlayerIndex]
+      if (slot) slot.score += 5
+    }
+
+    // Update boss HP
+    if (this.state.mode === 'coop' && this.state.boss) {
+      const bossPiece = Object.values(this.state.board.pieces).find(p => p.team === 'boss' && p.isKing)
+      if (bossPiece) {
+        this.state.boss.hp = bossPiece.hp
+        if (!this.state.boss.rage && this.state.boss.hp <= this.state.boss.maxHp / 2) {
+          this.state.boss.rage = true
+        }
+      }
+    }
+
+    // Check for winner
+    const winner = checkWinner(this.state)
+    if (winner) {
+      this.state.phase = 'ended'
+      this.state.winnerTeam = winner
+      this.state.endedAt = Date.now()
+      this.state.version++
+      return { ...result, turnEnded: true }
+    }
+
+    // End turn if not chaining or bonus
+    if (result.turnEnded) {
+      this.state = nextTurn(this.state)
+      this.checkChaos()
+    }
+
+    return result
+  }
+
+  useAbility(pieceId: string, target: Position): ActionResult {
+    if (this.state.phase !== 'playing') {
+      return { success: false, error: 'Game is not in progress' }
+    }
+
+    const result = applyAbility(this.state, pieceId, target)
+    if (!result.success || !result.newState) return result
+
+    this.state = result.newState
+
+    // Update player score for power-up
+    if (result.pickedUpPowerUp) {
+      const slot = this.state.players[this.state.currentPlayerIndex]
+      if (slot) slot.score += 5
+    }
+
+    // Check for winner
+    const winner = checkWinner(this.state)
+    if (winner) {
+      this.state.phase = 'ended'
+      this.state.winnerTeam = winner
+      this.state.endedAt = Date.now()
+      this.state.version++
+      return { ...result, turnEnded: true }
+    }
+
+    // End turn if not chaining or bonus
+    if (result.turnEnded) {
+      this.state = nextTurn(this.state)
+      this.checkChaos()
+    }
+
+    return result
+  }
+
+  endTurnByTimeout(): void {
+    if (this.state.phase !== 'playing') return
+    this.state = nextTurn(this.state)
+    this.checkChaos()
+  }
+
+  // === Lobby management ===
+
+  addPlayer(config: PlayerConfig): boolean {
+    if (this.state.phase !== 'lobby') return false
+    if (this.state.players.length >= 6) return false
+    this.state.players.push({
+      id: config.id,
+      name: config.name.slice(0, 20) || 'Anonymous',
+      avatar: config.avatar,
+      team: 'red',
+      character: config.character,
+      ready: false,
+      isHost: false,
+      isBot: config.isBot,
+      botDifficulty: config.botDifficulty,
+      connected: true,
+      captures: 0,
+      score: 0,
     })
-    // Speedster Dash: can move 2 squares forward if both squares are empty
-    if (piece.character === 'speedster' && !piece.isKing) {
-      const r2 = piece.row + dr * 2
-      const c2 = piece.col + dc * 2
-      if (inBounds(r2, c2)) {
-        if (!getPieceAt(board, r2, c2)) {
-          const cell2 = getCell(board, r2, c2)
-          if (cell2?.type !== 'blocked') {
-            moves.push({
-              pieceId: piece.id,
-              fromRow: piece.row,
-              fromCol: piece.col,
-              toRow: r2,
-              toCol: c2,
-              kind: 'simple',
-              capturedPieceIds: [],
-              isChainable: false,
-              pickedUpPowerUp: cell2?.powerUp,
-            })
-          }
-        }
-      }
-    }
-  }
-  return moves
-}
-
-// Get all capture moves (including chains) for a piece
-export function getCaptureMoves(board: Board, piece: Piece): Move[] {
-  if (piece.frozenTurns > 0) return []
-  const results: Move[] = []
-  const startMove: Move = {
-    pieceId: piece.id,
-    fromRow: piece.row,
-    fromCol: piece.col,
-    toRow: piece.row,
-    toCol: piece.col,
-    kind: 'capture',
-    capturedPieceIds: [],
-    isChainable: false,
-  }
-  exploreCaptures(board, piece, piece, [], startMove, results)
-  return results
-}
-
-function exploreCaptures(
-  board: Board,
-  original: Piece,
-  current: Piece,
-  captured: string[],
-  path: Move,
-  out: Move[],
-) {
-  let foundExtension = false
-  // Captures can be made in ANY diagonal direction (forward AND backward)
-  // even for non-king pieces. This is standard checkers rules and prevents
-  // kings from being uncatchable.
-  for (const [dr, dc] of DIAGS) {
-    const midR = current.row + dr
-    const midC = current.col + dc
-    const landR = current.row + dr * 2
-    const landC = current.col + dc * 2
-    if (!inBounds(landR, landC)) continue
-    const mid = getPieceAt(board, midR, midC)
-    if (!mid) continue
-    if (mid.team === current.team) continue
-    if (captured.includes(mid.id)) continue // can't double-capture same piece
-    const landPiece = getPieceAt(board, landR, landC)
-    if (landPiece && landPiece.id !== original.id) continue
-    const landCell = getCell(board, landR, landC)
-    if (landCell?.type === 'blocked') continue
-
-    foundExtension = true
-    const newCaptured = [...captured, mid.id]
-    const newPath: Move = {
-      ...path,
-      toRow: landR,
-      toCol: landC,
-      capturedPieceIds: newCaptured,
-      kind: newCaptured.length > 1 ? 'multi_capture' : 'capture',
-      isChainable: true,
-      pickedUpPowerUp: landCell?.powerUp,
-    }
-    out.push(newPath)
-
-    // Continue chain from landing position
-    const ghostCurrent: Piece = { ...current, row: landR, col: landC }
-    exploreCaptures(board, original, ghostCurrent, newCaptured, newPath, out)
+    this.state.version++
+    return true
   }
 
-  if (!foundExtension && captured.length > 0) {
-    // terminal chain — already pushed
-  }
-}
+  addBot(difficulty: BotDifficulty, team?: AnyTeam): boolean {
+    if (this.state.phase !== 'lobby') return false
+    if (this.state.players.length >= 6) return false
 
-// Get all legal moves for a piece (simple + captures)
-export function getLegalMoves(board: Board, piece: Piece): Move[] {
-  const captures = getCaptureMoves(board, piece)
-  if (captures.length > 0) return captures // forced capture rule (classic checkers)
-  return getSimpleMoves(board, piece)
-}
-
-// Get all legal moves for a team (any piece)
-export function getTeamMoves(board: Board, team: AnyTeam): { pieceId: string; moves: Move[] }[] {
-  const teamPieces = Object.values(board.pieces).filter(p => p.team === team && p.frozenTurns === 0)
-  const result: { pieceId: string; moves: Move[] }[] = []
-  // If any piece has a capture, only captures are legal (forced capture)
-  let anyCaptures = false
-  const pieceMoves: { pieceId: string; moves: Move[] }[] = []
-  for (const p of teamPieces) {
-    const m = getLegalMoves(board, p)
-    pieceMoves.push({ pieceId: p.id, moves: m })
-    if (m.some(x => x.kind === 'capture' || x.kind === 'multi_capture')) anyCaptures = true
-  }
-  if (anyCaptures) {
-    for (const pm of pieceMoves) {
-      const captures = pm.moves.filter(m => m.kind === 'capture' || m.kind === 'multi_capture')
-      if (captures.length > 0) result.push({ pieceId: pm.pieceId, moves: captures })
-    }
-  } else {
-    for (const pm of pieceMoves) {
-      if (pm.moves.length > 0) result.push(pm)
-    }
-  }
-  return result
-}
-
-// Apply a move to a board (returns new board, mutates nothing)
-// Returns the picked-up power-up (if any) so the caller can apply turn-level effects
-export function applyMove(board: Board, move: Move): { board: Board; promotedToKing: boolean; pickedUpPowerUp?: PowerUpType; appliedEffects: PowerUpEffect[] } {
-  const newPieces: Record<string, Piece> = {}
-  for (const p of Object.values(board.pieces)) {
-    newPieces[p.id] = { ...p }
-  }
-  const appliedEffects: PowerUpEffect[] = []
-  // Remove captured pieces (respect shields)
-  for (const capId of move.capturedPieceIds) {
-    const cap = newPieces[capId]
-    if (!cap) continue
-    if (cap.hasShield) {
-      cap.hasShield = false
-      cap.hp = Math.max(1, cap.hp - 1)
-      appliedEffects.push({ type: 'shield_break', pieceId: capId })
+    let botTeam: AnyTeam
+    if (team) {
+      botTeam = team
+    } else if (this.state.mode === 'coop') {
+      botTeam = 'red'
     } else {
-      cap.hp -= 1
-      if (cap.hp <= 0) {
-        delete newPieces[capId]
-        appliedEffects.push({ type: 'capture', pieceId: capId })
-      }
-    }
-  }
-  // Move the piece
-  const mover = newPieces[move.pieceId]
-  if (!mover) return { board, promotedToKing: false, appliedEffects }
-  mover.row = move.toRow
-  mover.col = move.toCol
-
-  let pickedUpPowerUp: PowerUpType | undefined
-  let promotedToKing = false
-  const newCells = board.cells.map(row => row.map(cell => ({ ...cell })))
-  const landCell = newCells[move.toRow]?.[move.toCol]
-  if (landCell && landCell.type === 'powerup' && landCell.powerUp) {
-    pickedUpPowerUp = landCell.powerUp
-    // Apply IMMEDIATE effects here. Caller handles turn-level effects (double_move, extra_jump).
-    const effect = applyPowerUpEffect(mover, pickedUpPowerUp, newPieces, newCells)
-    appliedEffects.push(...effect)
-    // Clear the cell
-    landCell.type = 'normal'
-    landCell.powerUp = undefined
-  }
-  // King promotion
-  if (!mover.isKing) {
-    if (mover.team === 'red' && mover.row === 0) {
-      mover.isKing = true
-      promotedToKing = true
-    } else if ((mover.team === 'blue' || mover.team === 'boss') && mover.row === board.size - 1) {
-      mover.isKing = true
-      promotedToKing = true
-    }
-  }
-  // Decrement blocked-turns
-  for (const row of newCells) {
-    for (const cell of row) {
-      if (cell.type === 'blocked' && cell.blockedTurns !== undefined) {
-        cell.blockedTurns -= 1
-        if (cell.blockedTurns <= 0) {
-          cell.type = 'normal'
-          cell.blockedTurns = undefined
-        }
-      }
-    }
-  }
-  return {
-    board: { size: board.size, cells: newCells, pieces: newPieces },
-    promotedToKing,
-    pickedUpPowerUp,
-    appliedEffects,
-  }
-}
-
-// Power-up effect log entry — used for FX/sound triggers
-export interface PowerUpEffect {
-  type: 'shield' | 'shield_break' | 'capture' | 'freeze' | 'swap' | 'bomb' | 'double_move' | 'extra_jump'
-  pieceId?: string
-  targetPieceIds?: string[]
-}
-
-// Apply a power-up's immediate effects to the board state.
-// Returns effect log entries for FX/sound.
-// NOTE: double_move and extra_jump are NOT applied here — the caller (move:make handler)
-// checks for them and skips the turn-end step.
-export function applyPowerUpEffect(
-  mover: Piece,
-  powerUp: PowerUpType,
-  pieces: Record<string, Piece>,
-  cells: Cell[][],
-): PowerUpEffect[] {
-  const effects: PowerUpEffect[] = []
-  const opponents = Object.values(pieces).filter(p => p.team !== mover.team && p.id !== mover.id)
-
-  switch (powerUp) {
-    case 'shield':
-      mover.hasShield = true
-      effects.push({ type: 'shield', pieceId: mover.id })
-      break
-
-    case 'double_move':
-      // Caller handles — just log
-      effects.push({ type: 'double_move', pieceId: mover.id })
-      break
-
-    case 'extra_jump':
-      // Caller handles — just log
-      effects.push({ type: 'extra_jump', pieceId: mover.id })
-      break
-
-    case 'freeze': {
-      // Freeze the nearest opponent piece for 1 turn (skips their next turn)
-      if (opponents.length > 0) {
-        let nearest = opponents[0]
-        let minDist = Math.abs(nearest.row - mover.row) + Math.abs(nearest.col - mover.col)
-        for (const o of opponents) {
-          const d = Math.abs(o.row - mover.row) + Math.abs(o.col - mover.col)
-          if (d < minDist) {
-            minDist = d
-            nearest = o
-          }
-        }
-        // frozenTurns = 1 means: the piece can't move on its team's next turn.
-        // nextTurn() decrements frozenTurns at the END of the frozen team's turn,
-        // so 1 → 0 after one skipped turn.
-        nearest.frozenTurns = Math.max(nearest.frozenTurns, 1)
-        effects.push({ type: 'freeze', pieceId: nearest.id })
-      }
-      break
+      const redCount = this.state.players.filter(p => p.team === 'red').length
+      const blueCount = this.state.players.filter(p => p.team === 'blue').length
+      botTeam = redCount <= blueCount ? 'red' : 'blue'
     }
 
-    case 'swap': {
-      // Swap with a random opponent piece (chaos!)
-      if (opponents.length > 0) {
-        const target = opponents[Math.floor(Math.random() * opponents.length)]
-        const tr = mover.row, tc = mover.col
-        mover.row = target.row
-        mover.col = target.col
-        target.row = tr
-        target.col = tc
-        effects.push({ type: 'swap', pieceId: mover.id, targetPieceIds: [target.id] })
-      }
-      break
+    if (this.state.mode === 'pvp') {
+      const teamCount = this.state.players.filter(p => p.team === botTeam).length
+      if (teamCount >= 3) return false
     }
 
-    case 'bomb': {
-      // Destroy the adjacent enemy piece with the lowest HP
-      const adjacent = opponents.filter(o => Math.abs(o.row - mover.row) <= 1 && Math.abs(o.col - mover.col) <= 1)
-      if (adjacent.length > 0) {
-        // Pick weakest
-        adjacent.sort((a, b) => a.hp - b.hp)
-        const target = adjacent[0]
-        if (target.hasShield) {
-          target.hasShield = false
-          target.hp = Math.max(1, target.hp - 1)
-          effects.push({ type: 'shield_break', pieceId: target.id })
-        } else {
-          target.hp -= 1
-          if (target.hp <= 0) {
-            delete pieces[target.id]
-            effects.push({ type: 'bomb', pieceId: target.id })
+    const BOT_NAMES = ['RoboRex', 'ByteBot', 'AlphaQ', 'TurboTux', 'Megatron', 'CyberCat']
+    const BOT_AVATARS = ['🤖', '👾', '🎮', '🛸', '⚙️', '🔮']
+
+    this.state.players.push({
+      id: `bot_${uuid().slice(0, 8)}`,
+      name: `${BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)]}`,
+      avatar: BOT_AVATARS[Math.floor(Math.random() * BOT_AVATARS.length)],
+      team: botTeam,
+      character: (['tank', 'speedster', 'mage', 'jester'] as const)[Math.floor(Math.random() * 4)],
+      ready: true,
+      isHost: false,
+      isBot: true,
+      botDifficulty: difficulty,
+      connected: true,
+      captures: 0,
+      score: 0,
+    })
+    this.state.version++
+    return true
+  }
+
+  removeBot(botId: string): boolean {
+    if (this.state.phase !== 'lobby') return false
+    const idx = this.state.players.findIndex(p => p.id === botId && p.isBot)
+    if (idx < 0) return false
+    this.state.players.splice(idx, 1)
+    this.state.version++
+    return true
+  }
+
+  updatePlayer(playerId: string, updates: Partial<PlayerSlot>): boolean {
+    const slot = this.state.players.find(p => p.id === playerId)
+    if (!slot) return false
+    if (updates.team !== undefined) slot.team = updates.team
+    if (updates.character !== undefined) slot.character = updates.character
+    if (updates.ready !== undefined) slot.ready = updates.ready
+    if (updates.name !== undefined) slot.name = updates.name.slice(0, 20)
+    this.state.version++
+    return true
+  }
+
+  startGame(): boolean {
+    const host = this.state.players.find(p => p.isHost)
+    if (!host) return false
+    const connected = this.state.players.filter(p => p.connected)
+    if (connected.length < 2) return false
+
+    // Auto-balance teams for PvP
+    if (this.state.mode === 'pvp') {
+      connected.forEach((p, i) => { p.team = i % 2 === 0 ? 'red' : 'blue' })
+    } else {
+      connected.forEach(p => { p.team = 'red' })
+    }
+
+    // Create fresh board
+    this.state.board = createBoard(this.state.mode, this.state.players.filter(p => p.connected))
+    this.state.phase = 'playing'
+    this.state.currentTurnTeam = 'red'
+    this.state.currentPlayerIndex = Math.max(0, this.state.players.findIndex(p => p.team === 'red' && p.connected))
+    this.state.turnStartedAt = Date.now()
+    this.state.movesThisTurn = 0
+    this.state.nextChaosAt = Date.now() + CHAOS_INTERVAL_SEC * 1000
+    this.state.chaosCount = 0
+    this.state.turnCount = 0
+    this.state.turnsWithoutCapture = 0
+
+    const bossPiece = Object.values(this.state.board.pieces).find(p => p.team === 'boss' && p.isKing)
+    if (this.state.mode === 'coop' && bossPiece) {
+      this.state.boss = { hp: bossPiece.hp, maxHp: bossPiece.hp, rage: false }
+    }
+
+    this.state.version++
+    return true
+  }
+
+  restart(): void {
+    // Full reset per GAME_CODEX.md section 7
+    this.state.phase = 'lobby'
+    this.state.players.forEach(p => { p.ready = false; p.captures = 0; p.score = 0 })
+    this.state.board = createBoard(this.state.mode, this.state.players)
+    this.state.winnerTeam = undefined
+    this.state.endedAt = undefined
+    this.state.boss = undefined
+    this.state.turnCount = 0
+    this.state.turnsWithoutCapture = 0
+    this.state.chaosCount = 0
+    this.state.currentTurnTeam = 'red'
+    this.state.currentPlayerIndex = 0
+    this.state.turnStartedAt = 0
+    this.state.movesThisTurn = 0
+    this.state.nextChaosAt = 0
+    this.state.pendingChaosEvent = undefined
+    this.state.version++
+  }
+
+  // === Private helpers ===
+
+  private checkChaos(): void {
+    if (Date.now() >= this.state.nextChaosAt) {
+      const event = CHAOS_EVENTS[Math.floor(Math.random() * CHAOS_EVENTS.length)]
+      this.state.pendingChaosEvent = event
+      this.applyChaosEvent(event)
+      this.state.nextChaosAt = Date.now() + CHAOS_INTERVAL_SEC * 1000
+    }
+  }
+
+  private applyChaosEvent(event: ChaosEvent): void {
+    if (event === 'shrink') {
+      const size = this.state.board.size
+      for (const c of [0, size - 1]) {
+        for (let r = 0; r < size; r++) {
+          // Only block empty cells
+          const piece = Object.values(this.state.board.pieces).find(p => p.row === r && p.col === c)
+          if (!piece) {
+            this.state.board.cells[r][c].type = 'blocked'
+            this.state.board.cells[r][c].blockedTurns = 3
           }
         }
       }
-      break
-    }
-  }
-  return effects
-}
-
-// Character abilities
-export function canUseAbility(piece: Piece): boolean {
-  if (piece.abilityUsed) return false
-  switch (piece.character) {
-    case 'mage':
-    case 'jester':
-      return true
-    case 'tank':
-    case 'speedster':
-      return false
-  }
-  return false
-}
-
-export function getAbilityTargets(board: Board, piece: Piece): { row: number; col: number }[] {
-  if (!canUseAbility(piece)) return []
-  switch (piece.character) {
-    case 'mage': {
-      // Teleport: any empty dark cell within 3 tiles
-      const targets: { row: number; col: number }[] = []
-      for (let r = 0; r < board.size; r++) {
-        for (let c = 0; c < board.size; c++) {
-          const cell = board.cells[r][c]
-          if (cell.tile !== 'dark') continue
-          if (cell.type === 'blocked') continue
-          if (getPieceAt(board, r, c)) continue
-          const dist = Math.max(Math.abs(r - piece.row), Math.abs(c - piece.col))
-          if (dist > 0 && dist <= 3) targets.push({ row: r, col: c })
+    } else if (event === 'power_rain') {
+      // Spawn 4 power-ups on empty dark cells
+      const size = this.state.board.size
+      const emptyDarkCells: { r: number; c: number }[] = []
+      for (let r = 2; r < size - 2; r++) {
+        for (let c = 0; c < size; c++) {
+          const cell = this.state.board.cells[r][c]
+          if (cell.tile === 'dark' && cell.type === 'normal') {
+            const piece = Object.values(this.state.board.pieces).find(p => p.row === r && p.col === c)
+            if (!piece) emptyDarkCells.push({ r, c })
+          }
         }
       }
-      return targets
-    }
-    case 'jester': {
-      // Swap: only with ADJACENT pieces (within 2 tiles Chebyshev distance).
-      // This prevents the "instant king" exploit (swapping to the back row)
-      // and makes jester a tactical repositioning tool, not a board-wide teleport.
-      const targets: { row: number; col: number }[] = []
-      for (const p of Object.values(board.pieces)) {
-        if (p.id === piece.id) continue
-        const dist = Math.max(Math.abs(p.row - piece.row), Math.abs(p.col - piece.col))
-        if (dist > 0 && dist <= 2) {
-          targets.push({ row: p.row, col: p.col })
-        }
+      for (let i = emptyDarkCells.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[emptyDarkCells[i], emptyDarkCells[j]] = [emptyDarkCells[j], emptyDarkCells[i]]
       }
-      return targets
+      const POOL: PowerUpType[] = ['double_move', 'freeze', 'swap', 'bomb', 'shield', 'extra_jump']
+      for (let i = 0; i < Math.min(4, emptyDarkCells.length); i++) {
+        const { r, c } = emptyDarkCells[i]
+        this.state.board.cells[r][c].type = 'powerup'
+        this.state.board.cells[r][c].powerUp = POOL[Math.floor(Math.random() * POOL.length)]
+      }
     }
-    default:
-      return []
+    // ice_age, double_trouble, frenzy: no active effect yet (future)
+    this.state.chaosCount++
+    this.state.version++
   }
 }

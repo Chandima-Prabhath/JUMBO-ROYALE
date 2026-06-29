@@ -1,10 +1,15 @@
-// Jumbo Royale - Smart AI (Minimax with alpha-beta pruning)
-import { Board, Piece, Move, AnyTeam, GameState } from './types'
-import { getTeamMoves, applyMove, getLegalMoves } from './engine'
-import { getPieceAt } from './board'
+// ===========================================================================
+// Jumbo Royale — AI Module
+// Bot AI that uses the GameEngine API.
+// Bots CANNOT make illegal moves — the engine rejects them.
+// Per GAME_CODEX.md section 8.
+// ===========================================================================
 
-// Difficulty levels
-export type BotDifficulty = 'easy' | 'medium' | 'hard' | 'brutal'
+import { GameState, Move, AnyTeam, BotDifficulty, Piece, Board, Position } from './types'
+import { getTeamLegalMoves, getLegalMoves, getCaptureMoves } from './moves'
+import { applyMove } from './apply'
+import { getAbilityTargets, canUseAbility } from './abilities'
+import { getPieceAt, inBounds, getCell } from './board'
 
 const DEPTH_BY_DIFFICULTY: Record<BotDifficulty, number> = {
   easy: 2,
@@ -14,151 +19,139 @@ const DEPTH_BY_DIFFICULTY: Record<BotDifficulty, number> = {
 }
 
 const RANDOMNESS_BY_DIFFICULTY: Record<BotDifficulty, number> = {
-  easy: 0.4,   // 40% chance to pick a random move
+  easy: 0.4,
   medium: 0.15,
   hard: 0.03,
-  brutal: 0,   // always optimal
+  brutal: 0,
 }
 
-// Evaluation: positive = good for `maxTeam`, negative = good for opponent
-function evaluateBoard(board: Board, maxTeam: AnyTeam, state: GameState): number {
-  let score = 0
-  const size = board.size
+// ===========================================================================
+// Pick the best move for a bot
+// ===========================================================================
 
-  const myPieces: Piece[] = []
-  const oppPieces: Piece[] = []
-  for (const p of Object.values(board.pieces)) {
-    if (p.team === maxTeam) myPieces.push(p)
-    else oppPieces.push(p)
-  }
-
-  // Material
-  for (const p of myPieces) {
-    score += p.isKing ? 50 : 30
-    score += p.hp * 5
-    if (p.hasShield) score += 10
-    if (p.frozenTurns > 0) score -= 15 // being frozen is bad
-  }
-  for (const p of oppPieces) {
-    score -= p.isKing ? 50 : 30
-    score -= p.hp * 5
-    if (p.hasShield) score -= 10
-    if (p.frozenTurns > 0) score += 15
-  }
-
-  // Boss bonus (co-op): boss worth a lot
-  if (state.mode === 'coop') {
-    const bossPiece = oppPieces.find(p => p.team === 'boss' && p.isKing)
-    if (bossPiece) {
-      score -= bossPiece.hp * 8 // boss HP is bad for us
-    }
-  }
-
-  // Positional: advancement (pawns moving forward is good)
-  for (const p of myPieces) {
-    if (p.isKing) continue
-    // Red advances toward row 0; blue/boss toward row size-1
-    const advancement = p.team === 'red' ? (size - 1 - p.row) : p.row
-    score += advancement * 2
-    // Back row defense (protect against promotion)
-    if (p.team === 'red' && p.row === size - 1) score += 4
-    if ((p.team === 'blue' || p.team === 'boss') && p.row === 0) score += 4
-    // Center control
-    const centerDist = Math.abs(p.col - (size - 1) / 2)
-    score += (size / 2 - centerDist) * 1
-  }
-  for (const p of oppPieces) {
-    if (p.isKing) continue
-    const advancement = p.team === 'red' ? (size - 1 - p.row) : p.row
-    score -= advancement * 2
-    if (p.team === 'red' && p.row === size - 1) score -= 4
-    if ((p.team === 'blue' || p.team === 'boss') && p.row === 0) score -= 4
-    const centerDist = Math.abs(p.col - (size - 1) / 2)
-    score -= (size / 2 - centerDist) * 1
-  }
-
-  // King mobility (kings in open space are strong)
-  for (const p of myPieces) {
-    if (p.isKing) {
-      const moves = getLegalMoves(board, p)
-      score += moves.length * 1.5
-    }
-  }
-  for (const p of oppPieces) {
-    if (p.isKing) {
-      const moves = getLegalMoves(board, p)
-      score -= moves.length * 1.5
-    }
-  }
-
-  // Vulnerability: pieces that can be captured next turn are bad
-  for (const p of myPieces) {
-    if (isVulnerable(board, p)) score -= 25
-  }
-  for (const p of oppPieces) {
-    if (isVulnerable(board, p)) score += 25
-  }
-
-  // Power-up proximity (going toward power-ups is good)
-  for (let r = 0; r < size; r++) {
-    for (let c = 0; c < size; c++) {
-      const cell = board.cells[r][c]
-      if (cell.type !== 'powerup' || !cell.powerUp) continue
-      // Find nearest my piece
-      let minDist = Infinity
-      for (const p of myPieces) {
-        const d = Math.max(Math.abs(p.row - r), Math.abs(p.col - c))
-        if (d < minDist) minDist = d
-      }
-      score += Math.max(0, 8 - minDist) * 0.5
-    }
-  }
-
-  return score
-}
-
-// Is this piece capturable by an opponent next turn?
-function isVulnerable(board: Board, piece: Piece): boolean {
-  const size = board.size
-  // Check all 4 diagonal neighbors of piece's position for enemy pieces,
-  // and verify the landing square (2 steps away) is empty
-  const diagDirs = [[-1, -1], [-1, 1], [1, -1], [1, 1]]
-  for (const [dr, dc] of diagDirs) {
-    const midR = piece.row + dr
-    const midC = piece.col + dc
-    const landR = piece.row + dr * 2
-    const landC = piece.col + dc * 2
-    if (landR < 0 || landR >= size || landC < 0 || landC >= size) continue
-    const mid = getPieceAt(board, midR, midC)
-    if (!mid || mid.team === piece.team) continue
-    // Kings can move any direction; pawns only forward
-    if (!mid.isKing) {
-      const forward = mid.team === 'red' ? -1 : 1
-      if (dr !== forward) continue
-    }
-    // Check landing square is empty (or is the piece itself, since it would be captured)
-    const land = getPieceAt(board, landR, landC)
-    if (!land || land.id === piece.id) return true
-  }
-  return false
-}
-
-// Generate all legal moves for a team, expanded so each capture-chain is its own move
-function getAllTeamMoves(board: Board, team: AnyTeam): { pieceId: string; move: Move }[] {
-  const teamMoveLists = getTeamMoves(board, team)
-  const all: { pieceId: string; move: Move }[] = []
+export function pickBestMove(
+  state: GameState,
+  team: AnyTeam,
+  difficulty: BotDifficulty = 'hard',
+): { pieceId: string; move: Move } | null {
+  const teamMoveLists = getTeamLegalMoves(state.board, team)
+  const allMoves: { pieceId: string; move: Move }[] = []
   for (const tm of teamMoveLists) {
     for (const m of tm.moves) {
-      all.push({ pieceId: tm.pieceId, move: m })
+      allMoves.push({ pieceId: tm.pieceId, move: m })
     }
   }
-  return all
+
+  if (allMoves.length === 0) return null
+
+  // Random move sometimes (lower difficulties)
+  if (Math.random() < RANDOMNESS_BY_DIFFICULTY[difficulty]) {
+    return allMoves[Math.floor(Math.random() * allMoves.length)]
+  }
+
+  // Easy mode: just pick best immediate eval
+  if (difficulty === 'easy') {
+    let bestScore = -Infinity
+    let bestMove = allMoves[0]
+    for (const m of allMoves) {
+      const result = applyMove(state, m.move)
+      if (!result.newState) continue
+      const score = evaluateBoard(result.newState.board, team, state)
+      if (score > bestScore) {
+        bestScore = score
+        bestMove = m
+      }
+    }
+    return bestMove
+  }
+
+  // Use minimax with alpha-beta pruning
+  const depth = DEPTH_BY_DIFFICULTY[difficulty]
+  const result = minimax(state, state.board, depth, -Infinity, Infinity, team, team)
+  return result.move ?? allMoves[0]
 }
 
-interface MinimaxResult {
-  score: number
-  move?: { pieceId: string; move: Move }
+// ===========================================================================
+// Should the bot use an ability?
+// ===========================================================================
+
+export function shouldUseAbility(
+  state: GameState,
+  piece: Piece,
+  team: AnyTeam,
+  difficulty: BotDifficulty = 'hard',
+): { shouldUse: boolean; targetRow?: number; targetCol?: number } {
+  if (!canUseAbility(piece)) return { shouldUse: false }
+
+  if (piece.character === 'mage') {
+    return shouldMageTeleport(state, piece, team, difficulty)
+  }
+
+  if (piece.character === 'jester') {
+    return shouldJesterSwap(state, piece, team, difficulty)
+  }
+
+  return { shouldUse: false }
 }
+
+function shouldMageTeleport(
+  state: GameState,
+  piece: Piece,
+  team: AnyTeam,
+  difficulty: BotDifficulty,
+): { shouldUse: boolean; targetRow?: number; targetCol?: number } {
+  const targets = getAbilityTargets(state.board, piece)
+  for (const t of targets) {
+    // Simulate: would this piece have a capture from (t.row, t.col)?
+    const simPiece: Piece = { ...piece, row: t.row, col: t.col }
+    const simBoard: Board = {
+      ...state.board,
+      pieces: { ...state.board.pieces, [piece.id]: simPiece },
+    }
+    const captures = getCaptureMoves(simBoard, simPiece)
+    if (captures.length > 0) {
+      if (difficulty === 'easy' && Math.random() > 0.3) continue
+      return { shouldUse: true, targetRow: t.row, targetCol: t.col }
+    }
+  }
+  return { shouldUse: false }
+}
+
+function shouldJesterSwap(
+  state: GameState,
+  piece: Piece,
+  team: AnyTeam,
+  difficulty: BotDifficulty,
+): { shouldUse: boolean; targetRow?: number; targetCol?: number } {
+  if (!isVulnerable(state.board, piece)) return { shouldUse: false }
+
+  const targets = getAbilityTargets(state.board, piece)
+  for (const t of targets) {
+    const other = getPieceAt(state.board, t.row, t.col)
+    if (!other || other.team === piece.team) continue
+
+    // Simulate swap
+    const simOther: Piece = { ...other, row: piece.row, col: piece.col }
+    const simPiece: Piece = { ...piece, row: other.row, col: other.col }
+    const simBoard: Board = {
+      ...state.board,
+      pieces: {
+        ...state.board.pieces,
+        [piece.id]: simPiece,
+        [other.id]: simOther,
+      },
+    }
+    if (!isVulnerable(simBoard, simPiece)) {
+      if (difficulty === 'easy' && Math.random() > 0.4) continue
+      return { shouldUse: true, targetRow: t.row, targetCol: t.col }
+    }
+  }
+  return { shouldUse: false }
+}
+
+// ===========================================================================
+// Minimax with alpha-beta pruning
+// ===========================================================================
 
 function minimax(
   state: GameState,
@@ -168,168 +161,115 @@ function minimax(
   beta: number,
   maximizingTeam: AnyTeam,
   currentTeam: AnyTeam,
-): MinimaxResult {
-  const moves = getAllTeamMoves(board, currentTeam)
-
-  // Terminal: depth 0 or no moves
-  if (depth === 0 || moves.length === 0) {
-    const evalScore = evaluateBoard(board, maximizingTeam, state)
-    // If no moves, this team loses — heavy penalty
-    if (moves.length === 0) {
-      if (currentTeam === maximizingTeam) return { score: evalScore - 10000 }
-      else return { score: evalScore + 10000 }
+): { score: number; move?: { pieceId: string; move: Move } } {
+  const moves = getTeamLegalMoves(board, currentTeam)
+  const allMoves: { pieceId: string; move: Move }[] = []
+  for (const tm of moves) {
+    for (const m of tm.moves) {
+      allMoves.push({ pieceId: tm.pieceId, move: m })
     }
-    return { score: evalScore }
   }
 
-  const otherTeam: AnyTeam = currentTeam === 'red' ? 'blue' : 'red'
-  // In co-op, "blue" doesn't exist; boss is the opponent
-  const hasBlue = Object.values(board.pieces).some(p => p.team === 'blue')
-  const hasBoss = Object.values(board.pieces).some(p => p.team === 'boss')
-  const nextTeam: AnyTeam = (() => {
-    if (state.mode === 'coop') {
-      return currentTeam === 'red' ? 'boss' : 'red'
+  if (depth === 0 || allMoves.length === 0) {
+    const score = evaluateBoard(board, maximizingTeam, state)
+    if (allMoves.length === 0) {
+      return { score: currentTeam === maximizingTeam ? score - 10000 : score + 10000 }
     }
-    return currentTeam === 'red' ? 'blue' : 'red'
-  })()
-  void hasBlue
-  void hasBoss
-  void otherTeam
+    return { score }
+  }
+
+  const nextTeam: AnyTeam = state.mode === 'coop'
+    ? (currentTeam === 'red' ? 'boss' : 'red')
+    : (currentTeam === 'red' ? 'blue' : 'red')
 
   if (currentTeam === maximizingTeam) {
-    let best: MinimaxResult = { score: -Infinity }
-    for (const m of moves) {
-      const { board: newBoard } = applyMove(board, m.move)
-      const result = minimax(state, newBoard, depth - 1, alpha, beta, maximizingTeam, nextTeam)
-      if (result.score > best.score) {
-        best = { score: result.score, move: m }
-      }
-      alpha = Math.max(alpha, result.score)
-      if (beta <= alpha) break // beta cutoff
+    let best = { score: -Infinity }
+    for (const m of allMoves) {
+      const result = applyMove({ ...state, board }, m.move)
+      if (!result.newState) continue
+      const child = minimax(state, result.newState.board, depth - 1, alpha, beta, maximizingTeam, nextTeam)
+      if (child.score > best.score) best = { score: child.score, move: m }
+      alpha = Math.max(alpha, child.score)
+      if (beta <= alpha) break
     }
     return best
   } else {
-    let best: MinimaxResult = { score: Infinity }
-    for (const m of moves) {
-      const { board: newBoard } = applyMove(board, m.move)
-      const result = minimax(state, newBoard, depth - 1, alpha, beta, maximizingTeam, nextTeam)
-      if (result.score < best.score) {
-        best = { score: result.score, move: m }
-      }
-      beta = Math.min(beta, result.score)
-      if (beta <= alpha) break // alpha cutoff
+    let best = { score: Infinity }
+    for (const m of allMoves) {
+      const result = applyMove({ ...state, board }, m.move)
+      if (!result.newState) continue
+      const child = minimax(state, result.newState.board, depth - 1, alpha, beta, maximizingTeam, nextTeam)
+      if (child.score < best.score) best = { score: child.score, move: m }
+      beta = Math.min(beta, child.score)
+      if (beta <= alpha) break
     }
     return best
   }
 }
 
-// Pick the best move for a bot, with some randomness based on difficulty
-export function pickBestMove(
-  state: GameState,
-  team: AnyTeam,
-  difficulty: BotDifficulty = 'hard',
-): { pieceId: string; move: Move } | null {
-  const depth = DEPTH_BY_DIFFICULTY[difficulty]
-  const randomness = RANDOMNESS_BY_DIFFICULTY[difficulty]
+// ===========================================================================
+// Board evaluation
+// ===========================================================================
 
-  const allMoves = getAllTeamMoves(state.board, team)
-  if (allMoves.length === 0) return null
+function evaluateBoard(board: Board, maxTeam: AnyTeam, state: GameState): number {
+  let score = 0
+  const size = board.size
 
-  // Random move sometimes (lower difficulties)
-  if (Math.random() < randomness) {
-    return allMoves[Math.floor(Math.random() * allMoves.length)]
-  }
+  for (const p of Object.values(board.pieces)) {
+    const val = p.isKing ? 50 : 30
+    const hpBonus = p.hp * 5
+    const shieldBonus = p.hasShield ? 10 : 10
+    const frozenPenalty = p.frozenTurns > 0 ? 15 : 0
+    const total = val + hpBonus + shieldBonus - frozenPenalty
 
-  // For easy mode, just pick the move with best immediate eval (depth 1)
-  if (difficulty === 'easy') {
-    let bestScore = -Infinity
-    let bestMove = allMoves[0]
-    for (const m of allMoves) {
-      const { board: newBoard } = applyMove(state.board, m.move)
-      const score = evaluateBoard(newBoard, team, state)
-      if (score > bestScore) {
-        bestScore = score
-        bestMove = m
-      }
+    if (p.team === maxTeam) score += total
+    else score -= total
+
+    // Positional: advancement
+    if (!p.isKing) {
+      const advancement = p.team === 'red' ? (size - 1 - p.row) : p.row
+      score += (p.team === maxTeam ? advancement : -advancement) * 2
     }
-    return bestMove
+
+    // King mobility
+    if (p.isKing) {
+      const moves = getLegalMoves(board, p)
+      score += (p.team === maxTeam ? moves.length : -moves.length) * 1.5
+    }
   }
 
-  // Use minimax with alpha-beta
-  const result = minimax(state, state.board, depth, -Infinity, Infinity, team, team)
-  return result.move ?? allMoves[0]
+  // Vulnerability
+  for (const p of Object.values(board.pieces)) {
+    if (p.team === maxTeam && isVulnerable(board, p)) score -= 25
+    if (p.team !== maxTeam && isVulnerable(board, p)) score += 25
+  }
+
+  // Boss HP (co-op)
+  if (state.mode === 'coop') {
+    const boss = Object.values(board.pieces).find(p => p.team === 'boss' && p.isKing)
+    if (boss && maxTeam === 'red') score -= boss.hp * 8
+  }
+
+  return score
 }
 
-// Should the bot use its character ability this turn?
-export function shouldUseAbility(
-  state: GameState,
-  piece: Piece,
-  team: AnyTeam,
-  difficulty: BotDifficulty = 'hard',
-): { shouldUse: boolean; targetRow?: number; targetCol?: number } {
-  if (piece.abilityUsed) return { shouldUse: false }
-  if (piece.frozenTurns > 0) return { shouldUse: false }
+// ===========================================================================
+// Vulnerability check — can this piece be captured next turn?
+// ===========================================================================
 
-  // Mage teleport — use if it leads to a capture or king promotion
-  if (piece.character === 'mage') {
-    // Try each teleport target, see if it enables a capture next move
-    const size = state.board.size
-    for (let r = 0; r < size; r++) {
-      for (let c = 0; c < size; c++) {
-        const cell = state.board.cells[r][c]
-        if (cell.tile !== 'dark' || cell.type === 'blocked') continue
-        if (getPieceAt(state.board, r, c)) continue
-        const dist = Math.max(Math.abs(r - piece.row), Math.abs(c - piece.col))
-        if (dist === 0 || dist > 3) continue
-        // Simulate: would this piece have a capture from (r, c)?
-        const simPiece: Piece = { ...piece, row: r, col: c }
-        const simBoard: Board = {
-          ...state.board,
-          pieces: { ...state.board.pieces, [piece.id]: simPiece },
-        }
-        const moves = getLegalMoves(simBoard, simPiece)
-        const captures = moves.filter(m => m.kind === 'capture' || m.kind === 'multi_capture')
-        if (captures.length > 0) {
-          // Higher difficulty uses this more often
-          if (difficulty === 'easy' && Math.random() > 0.3) continue
-          return { shouldUse: true, targetRow: r, targetCol: c }
-        }
-        // NOTE: Abilities no longer trigger king promotion, so we don't
-        // teleport to the back row just to promote. That was an exploit.
-      }
-    }
+function isVulnerable(board: Board, piece: Piece): boolean {
+  const ALL_DIAGS = [[-1, -1], [-1, 1], [1, -1], [1, 1]]
+  for (const [dr, dc] of ALL_DIAGS) {
+    const midR = piece.row + dr
+    const midC = piece.col + dc
+    const landR = piece.row + dr * 2
+    const landC = piece.col + dc * 2
+    if (!inBounds(board, landR, landC)) continue
+    const mid = getPieceAt(board, midR, midC)
+    if (!mid || mid.team === piece.team) continue
+    // Kings can capture any direction; pawns can capture any direction too (per codex)
+    const land = getPieceAt(board, landR, landC)
+    if (!land || land.id === piece.id) return true
   }
-
-  // Jester swap — use to escape danger or set up capture
-  // NOTE: Jester can only swap with ADJACENT pieces (within 2 tiles).
-  if (piece.character === 'jester') {
-    // Use if this piece is vulnerable
-    if (isVulnerable(state.board, piece)) {
-      // Find a safer piece to swap with (within 2 tiles, opponent preferably)
-      for (const other of Object.values(state.board.pieces)) {
-        if (other.id === piece.id) continue
-        if (other.team === piece.team) continue
-        // Range check: only adjacent pieces (within 2 tiles Chebyshev distance)
-        const dist = Math.max(Math.abs(other.row - piece.row), Math.abs(other.col - piece.col))
-        if (dist > 2) continue
-        // Would swapping put the opponent in danger? Good!
-        const simOther: Piece = { ...other, row: piece.row, col: piece.col }
-        const simPiece: Piece = { ...piece, row: other.row, col: other.col }
-        const simBoard: Board = {
-          ...state.board,
-          pieces: {
-            ...state.board.pieces,
-            [piece.id]: simPiece,
-            [other.id]: simOther,
-          },
-        }
-        if (!isVulnerable(simBoard, simPiece)) {
-          if (difficulty === 'easy' && Math.random() > 0.4) continue
-          return { shouldUse: true, targetRow: other.row, targetCol: other.col }
-        }
-      }
-    }
-  }
-
-  return { shouldUse: false }
+  return false
 }

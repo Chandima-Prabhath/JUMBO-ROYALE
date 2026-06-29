@@ -4,11 +4,17 @@ import { Server } from 'socket.io'
 import { v4 as uuid } from 'uuid'
 import {
   GameState, GameMode, PlayerSlot, AnyTeam, CharacterClass,
-  Move, EmoteEvent, Piece, BotDifficulty, PowerUpType,
+  Move, EmoteEvent, Piece, BotDifficulty, PowerUpType, PowerUpEffect,
 } from '../../src/game/types'
-import { createBoard, BOARD_SIZE, TURN_DURATION_SEC, MAX_MOVES_PER_TURN, CHAOS_INTERVAL_SEC } from '../../src/game/board'
-import { getLegalMoves, applyMove, getTeamMoves, getAbilityTargets, applyPowerUpEffect, PowerUpEffect } from '../../src/game/engine'
-import { checkWinner, applyChaos, rollChaosEvent, pickBossMove, bossSummon } from '../../src/game/rules'
+import { createBoard, BOARD_SIZE, POWERUP_COUNT } from '../../src/game/board'
+import { TURN_DURATION_SEC, MAX_MOVES_PER_TURN, CHAOS_INTERVAL_SEC } from '../../src/game/turn'
+import { getLegalMoves } from '../../src/game/moves'
+import { applyMove, applyPowerUpEffect } from '../../src/game/apply'
+import { getAbilityTargets } from '../../src/game/abilities'
+import { getTeamLegalMoves as getTeamMoves } from '../../src/game/moves'
+import { checkWinner } from '../../src/game/winner'
+import { applyChaos, rollChaosEvent } from '../../src/game'
+import { pickBossMove, bossSummon } from '../../src/game/boss'
 import { pickBestMove, shouldUseAbility } from '../../src/game/ai'
 
 // Configurable port (env override for self-hosting)
